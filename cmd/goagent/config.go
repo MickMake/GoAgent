@@ -191,18 +191,18 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		cfg.Listener.DefaultQuoteLength = value
 	case "cloudflare.default_token":
 		cfg.Cloudflare.DefaultToken = value
-	case "cloudflare.tunnel_enabled":
+	case "cloudflare.enabled":
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
 			return cfg, err
 		}
 		cfg.Cloudflare.Enabled = parsed
-	case "cloudflare.tunnel_mode":
+	case "cloudflare.mode":
 		if value != "auto" && value != "temporary" && value != "authenticated" && value != "disabled" {
-			return cfg, errors.New("cloudflare.tunnel_mode must be auto, temporary, authenticated, or disabled")
+			return cfg, errors.New("cloudflare.mode must be auto, temporary, authenticated, or disabled")
 		}
 		cfg.Cloudflare.Mode = value
-	case "cloudflare.cloudflared_log_level":
+	case "cloudflare.log_level":
 		cfg.Cloudflare.LogLevel = value
 	default:
 		return cfg, fmt.Errorf("unknown config key %q", key)
@@ -216,7 +216,7 @@ func normalizeConfigKey(key string) string {
 		return "global." + key
 	case "listen_addr", "default_api_key", "default_quote_length":
 		return "listener." + key
-	case "default_token", "tunnel_enabled", "tunnel_mode", "cloudflared_log_level":
+	case "default_token", "enabled", "mode", "log_level":
 		return "cloudflare." + key
 	default:
 		return key

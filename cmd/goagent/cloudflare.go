@@ -292,9 +292,9 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	case "temporary":
 		useToken = false
 	case "disabled":
-		return nil, errors.New("cloudflare.tunnel_mode is disabled")
+		return nil, errors.New("cloudflare.mode is disabled")
 	default:
-		return nil, fmt.Errorf("invalid cloudflare.tunnel_mode %q", cfg.Cloudflare.Mode)
+		return nil, fmt.Errorf("invalid cloudflare.mode %q", cfg.Cloudflare.Mode)
 	}
 
 	if useToken {
