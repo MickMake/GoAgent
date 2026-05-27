@@ -1,26 +1,30 @@
 package main
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"archive/tar"
-	"compress/gzip"
-	"io"
-	"net/http"
+	"regexp"
 	"runtime"
 )
 
 type CloudflareConfig struct {
-	DefaultToken        string `json:"default_token"`
-	Enabled       bool   `json:"enabled"`
-	Mode          string `json:"mode"`
-	LogLevel string `json:"log_level"`
+	DefaultToken string `json:"default_token"`
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode"`
+	LogLevel     string `json:"log_level"`
 }
+
+var cloudflareTunnelURLPattern = regexp.MustCompile(`https://[-a-zA-Z0-9]+\.trycloudflare\.com`)
 
 func ensureCloudflared(cfg AppConfig) (string, error) {
 	if err := os.MkdirAll(cfg.Global.CacheDir, 0o755); err != nil {
@@ -228,13 +232,35 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	}
 
 	cmd := exec.CommandContext(ctx, cloudflaredPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	pipeReader, pipeWriter := io.Pipe()
+	cmd.Stdout = pipeWriter
+	cmd.Stderr = pipeWriter
+	go relayCloudflaredOutput(pipeReader)
+
 	if err := cmd.Start(); err != nil {
+		_ = pipeWriter.Close()
 		return nil, err
 	}
+	go func() {
+		_ = cmd.Wait()
+		_ = pipeWriter.Close()
+	}()
 	log.Printf("cloudflared started with pid %d", cmd.Process.Pid)
 	return cmd, nil
+}
+
+func relayCloudflaredOutput(reader io.Reader) {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Fprintln(os.Stderr, line)
+		if url := cloudflareTunnelURLPattern.FindString(line); url != "" {
+			log.Printf("Cloudflare tunnel URL: %s", url)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("cloudflared output read error: %v", err)
+	}
 }
 
 func cloudflareTokenPath(cfg AppConfig, name string) string {
