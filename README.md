@@ -11,6 +11,8 @@ Built from a tractor in a field, which feels important architecturally.
 - Runtime config endpoint
 - Configurable default quote mode
 - Endpoint marker strings for ChatGPT testing
+- Auto-download Cloudflare Tunnel support
+- Automatic OS/architecture detection
 - Local-only listener
 - Designed for Cloudflare Tunnel exposure
 - Tiny and gloriously boring
@@ -40,10 +42,14 @@ Cloudflare Tunnel exposes it safely without opening inbound ports.
 Debian/Ubuntu:
 
 ```bash
-sudo apt install golang fortune-mod cloudflared
+sudo apt install golang fortune-mod
 ```
 
+No manual cloudflared installation is required when using `--tunnel`.
+
 ## Run
+
+### Standard mode
 
 ```bash
 export GOAGENT_API_KEY="replace-me"
@@ -51,11 +57,61 @@ export GOAGENT_API_KEY="replace-me"
 go run ./cmd/goagent
 ```
 
+### Tunnel mode
+
+Automatically:
+
+- detects OS/architecture
+- downloads official `cloudflared`
+- caches it locally
+- launches the tunnel
+
+```bash
+export GOAGENT_API_KEY="replace-me"
+
+go run ./cmd/goagent --tunnel
+```
+
 Expected output:
 
 ```text
-GoAgent listening on :8080
+GoAgent listening on 127.0.0.1:8080
+cloudflared started with pid 12345
 ```
+
+Cloudflare will then emit a public HTTPS endpoint.
+
+Example:
+
+```text
+https://something-random.trycloudflare.com
+```
+
+## cloudflared cache location
+
+GoAgent caches downloaded binaries in:
+
+### Linux/macOS
+
+```text
+~/.cache/goagent/
+```
+
+### Windows
+
+```text
+%LocalAppData%\goagent\
+```
+
+This avoids repeatedly downloading binaries like a caffeinated package manager.
+
+## Supported platforms
+
+| OS | Architectures |
+|---|---|
+| Linux | amd64, arm64, arm, 386 |
+| macOS | amd64, arm64 |
+| Windows | amd64, 386 |
 
 ## Endpoint markers
 
@@ -200,29 +256,6 @@ Environment variable:
 export GOAGENT_API_KEY="replace-me"
 ```
 
-## Cloudflare Tunnel
-
-Quick temporary tunnel:
-
-```bash
-cloudflared tunnel --url http://127.0.0.1:8080
-```
-
-Cloudflare will provide a public HTTPS endpoint.
-
-Example:
-
-```text
-https://something-random.trycloudflare.com
-```
-
-This avoids:
-
-- router port forwarding
-- exposing your server IP
-- firewall misery
-- summoning networking demons from 2003
-
 ## ChatGPT Actions
 
 Recommended configuration:
@@ -261,7 +294,7 @@ go build -o goagent ./cmd/goagent
 Run:
 
 ```bash
-./goagent
+./goagent --tunnel
 ```
 
 ## Future ideas
@@ -273,6 +306,7 @@ Run:
 - structured logging
 - multiple quote providers
 - MCP integration
+- embedded cloudflared binary
 - accidentally inventing distributed AI middleware
 
 ## Notes
