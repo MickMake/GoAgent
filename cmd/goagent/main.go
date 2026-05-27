@@ -108,8 +108,8 @@ func runServeCommand(cfg AppConfig, args []string) error {
 		return err
 	}
 
-	tunnelRequested := *tunnelFlag || cfg.Cloudflare.TunnelEnabled
-	if cfg.Cloudflare.TunnelMode == "disabled" {
+	tunnelRequested := *tunnelFlag || cfg.Cloudflare.Enabled
+	if cfg.Cloudflare.Mode == "disabled" {
 		tunnelRequested = false
 	}
 

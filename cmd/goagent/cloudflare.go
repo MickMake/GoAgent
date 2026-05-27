@@ -12,9 +12,9 @@ import (
 
 type CloudflareConfig struct {
 	DefaultToken        string `json:"default_token"`
-	TunnelEnabled       bool   `json:"tunnel_enabled"`
-	TunnelMode          string `json:"tunnel_mode"`
-	CloudflaredLogLevel string `json:"cloudflared_log_level"`
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode"`
+	LogLevel string `json:"cloudflared_log_level"`
 }
 
 func runTokenCommand(cfg AppConfig, args []string) error {
@@ -53,13 +53,13 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	}
 
 	args := []string{"tunnel"}
-	if cfg.Cloudflare.CloudflaredLogLevel != "" {
-		args = append(args, "--loglevel", cfg.Cloudflare.CloudflaredLogLevel)
+	if cfg.Cloudflare.LogLevel != "" {
+		args = append(args, "--loglevel", cfg.Cloudflare.LogLevel)
 	}
 
 	token, tokenErr := readNamedSecret(cloudflareTokenPath(cfg, cfg.Cloudflare.DefaultToken))
 	useToken := false
-	switch cfg.Cloudflare.TunnelMode {
+	switch cfg.Cloudflare.Mode {
 	case "auto":
 		useToken = tokenErr == nil && token != ""
 	case "authenticated":
@@ -72,7 +72,7 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	case "disabled":
 		return nil, errors.New("cloudflare.tunnel_mode is disabled")
 	default:
-		return nil, fmt.Errorf("invalid cloudflare.tunnel_mode %q", cfg.Cloudflare.TunnelMode)
+		return nil, fmt.Errorf("invalid cloudflare.tunnel_mode %q", cfg.Cloudflare.Mode)
 	}
 
 	if useToken {

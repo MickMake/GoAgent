@@ -45,9 +45,9 @@ func defaultConfig() AppConfig {
 		},
 		Cloudflare: CloudflareConfig{
 			DefaultToken:        "default",
-			TunnelEnabled:       false,
-			TunnelMode:          "auto",
-			CloudflaredLogLevel: "info",
+			Enabled:       false,
+			Mode:          "auto",
+			LogLevel: "info",
 		},
 	}
 }
@@ -98,11 +98,11 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.Cloudflare.DefaultToken == "" {
 		cfg.Cloudflare.DefaultToken = defaults.Cloudflare.DefaultToken
 	}
-	if cfg.Cloudflare.TunnelMode == "" {
-		cfg.Cloudflare.TunnelMode = defaults.Cloudflare.TunnelMode
+	if cfg.Cloudflare.Mode == "" {
+		cfg.Cloudflare.Mode = defaults.Cloudflare.Mode
 	}
-	if cfg.Cloudflare.CloudflaredLogLevel == "" {
-		cfg.Cloudflare.CloudflaredLogLevel = defaults.Cloudflare.CloudflaredLogLevel
+	if cfg.Cloudflare.LogLevel == "" {
+		cfg.Cloudflare.LogLevel = defaults.Cloudflare.LogLevel
 	}
 	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
 	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
@@ -196,14 +196,14 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		if err != nil {
 			return cfg, err
 		}
-		cfg.Cloudflare.TunnelEnabled = parsed
+		cfg.Cloudflare.Enabled = parsed
 	case "cloudflare.tunnel_mode":
 		if value != "auto" && value != "temporary" && value != "authenticated" && value != "disabled" {
 			return cfg, errors.New("cloudflare.tunnel_mode must be auto, temporary, authenticated, or disabled")
 		}
-		cfg.Cloudflare.TunnelMode = value
+		cfg.Cloudflare.Mode = value
 	case "cloudflare.cloudflared_log_level":
-		cfg.Cloudflare.CloudflaredLogLevel = value
+		cfg.Cloudflare.LogLevel = value
 	default:
 		return cfg, fmt.Errorf("unknown config key %q", key)
 	}
