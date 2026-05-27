@@ -21,14 +21,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-)
 
-const (
-	markerQuoteEndpoint      = "GOAGENT_QUOTE_ENDPOINT_REACHED"
-	markerConfigGetEndpoint  = "GOAGENT_CONFIG_GET_ENDPOINT_REACHED"
-	markerConfigPostEndpoint = "GOAGENT_CONFIG_POST_ENDPOINT_REACHED"
+	"github.com/MickMake/GoAgent/providers/fortune"
+	"github.com/MickMake/GoAgent/providers/shell"
 )
 
 type AppConfig struct {
@@ -40,6 +36,7 @@ type AppConfig struct {
 type GlobalConfig struct {
 	CacheDir               string `json:"cache_dir"`
 	KeyDir                 string `json:"key_dir"`
+	ProviderBaseDir         string `json:"provider_base_dir"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds"`
 }
 
@@ -57,21 +54,9 @@ type CloudflareConfig struct {
 }
 
 type Response struct {
-	Endpoint      string `json:"endpoint,omitempty"`
-	Marker        string `json:"marker,omitempty"`
-	Quote         string `json:"quote,omitempty"`
-	DefaultLength string `json:"default_length,omitempty"`
-	Error         string `json:"error,omitempty"`
+	Quote string `json:"quote,omitempty"`
+	Error string `json:"error,omitempty"`
 }
-
-type ConfigRequest struct {
-	DefaultLength string `json:"default_length"`
-}
-
-var (
-	configMu      sync.RWMutex
-	defaultLength = "short"
-)
 
 func main() {
 	cfg, err := loadConfig()
@@ -104,7 +89,6 @@ func main() {
 	flag.Parse()
 
 	cfg.Listener.ListenAddr = *listenFlag
-	setDefaultLength(cfg.Listener.DefaultQuoteLength)
 
 	apiKey, err := loadAPIKey(cfg)
 	if err != nil {
@@ -127,8 +111,15 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health)
-	mux.HandleFunc("/quote", requireAPIKey(apiKey, quote))
-	mux.HandleFunc("/config", requireAPIKey(apiKey, configEndpoint))
+
+	protect := func(next http.HandlerFunc) http.HandlerFunc {
+		return requireAPIKey(apiKey, next)
+	}
+
+	fortune.Register(mux, protect, cfg.Listener.DefaultQuoteLength)
+	if err := shell.Register(mux, protect, cfg.Global.ProviderBaseDir); err != nil {
+		return fmt.Errorf("shell provider failed: %w", err)
+	}
 
 	server := &http.Server{Addr: cfg.Listener.ListenAddr, Handler: mux}
 
@@ -192,80 +183,6 @@ func health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Quote: "ok"})
 }
 
-func quote(w http.ResponseWriter, r *http.Request) {
-	length := r.URL.Query().Get("length")
-	if length == "" {
-		length = getDefaultLength()
-	}
-
-	args := fortuneArgs(length)
-	if args == nil {
-		writeJSON(w, http.StatusBadRequest, Response{Error: "use length=short or length=long"})
-		return
-	}
-
-	out, err := exec.Command("fortune", args...).Output()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, Response{Error: err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, Response{
-		Endpoint:      "quote",
-		Marker:        markerQuoteEndpoint,
-		Quote:         strings.TrimSpace(string(out)),
-		DefaultLength: getDefaultLength(),
-	})
-}
-
-func configEndpoint(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, Response{Endpoint: "config", Marker: markerConfigGetEndpoint, DefaultLength: getDefaultLength()})
-	case http.MethodPost:
-		var req ConfigRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, Response{Error: "invalid JSON body"})
-			return
-		}
-		if fortuneArgs(req.DefaultLength) == nil {
-			writeJSON(w, http.StatusBadRequest, Response{Error: "default_length must be short or long"})
-			return
-		}
-		setDefaultLength(req.DefaultLength)
-		writeJSON(w, http.StatusOK, Response{Endpoint: "config", Marker: markerConfigPostEndpoint, DefaultLength: getDefaultLength()})
-	default:
-		w.Header().Set("Allow", "GET, POST")
-		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
-	}
-}
-
-func fortuneArgs(length string) []string {
-	switch length {
-	case "short":
-		return []string{"-s"}
-	case "long":
-		return []string{}
-	default:
-		return nil
-	}
-}
-
-func getDefaultLength() string {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return defaultLength
-}
-
-func setDefaultLength(length string) {
-	if fortuneArgs(length) == nil {
-		length = "short"
-	}
-	configMu.Lock()
-	defer configMu.Unlock()
-	defaultLength = length
-}
-
 func requireAPIKey(expected string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != expected {
@@ -288,6 +205,7 @@ func defaultConfig() AppConfig {
 		Global: GlobalConfig{
 			CacheDir:               filepath.Join(base, "cache"),
 			KeyDir:                 filepath.Join(base, "keys"),
+			ProviderBaseDir:        filepath.Join(base, "providers"),
 			ShutdownTimeoutSeconds: 5,
 		},
 		Listener: ListenerConfig{
@@ -332,6 +250,9 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.Global.KeyDir == "" {
 		cfg.Global.KeyDir = defaults.Global.KeyDir
 	}
+	if cfg.Global.ProviderBaseDir == "" {
+		cfg.Global.ProviderBaseDir = defaults.Global.ProviderBaseDir
+	}
 	if cfg.Global.ShutdownTimeoutSeconds <= 0 {
 		cfg.Global.ShutdownTimeoutSeconds = defaults.Global.ShutdownTimeoutSeconds
 	}
@@ -355,6 +276,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	}
 	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
 	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
+	cfg.Global.ProviderBaseDir = expandPath(cfg.Global.ProviderBaseDir)
 	return cfg
 }
 
@@ -417,6 +339,8 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		cfg.Global.CacheDir = expandPath(value)
 	case "global.key_dir":
 		cfg.Global.KeyDir = expandPath(value)
+	case "global.provider_base_dir":
+		cfg.Global.ProviderBaseDir = expandPath(value)
 	case "global.shutdown_timeout_seconds":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -431,7 +355,7 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 	case "listener.default_api_key":
 		cfg.Listener.DefaultAPIKey = value
 	case "listener.default_quote_length":
-		if fortuneArgs(value) == nil {
+		if value != "short" && value != "long" {
 			return cfg, errors.New("listener.default_quote_length must be short or long")
 		}
 		cfg.Listener.DefaultQuoteLength = value
@@ -458,7 +382,7 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 
 func normalizeConfigKey(key string) string {
 	switch key {
-	case "cache_dir", "key_dir", "shutdown_timeout_seconds":
+	case "cache_dir", "key_dir", "provider_base_dir", "shutdown_timeout_seconds":
 		return "global." + key
 	case "listen_addr", "default_api_key", "default_quote_length":
 		return "listener." + key
