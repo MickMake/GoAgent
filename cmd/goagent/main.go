@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/MickMake/GoAgent/providers/fortune"
@@ -104,7 +105,7 @@ func runServeCommand(cfg AppConfig, args []string) error {
 }
 
 func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	mux := http.NewServeMux()
@@ -152,15 +153,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	}
 
 	shutdownServer(server, cfg)
-
-	if tunnelCmd != nil && tunnelCmd.Process != nil {
-		if err := tunnelCmd.Process.Kill(); err != nil {
-			log.Printf("cloudflared kill error: %v", err)
-		} else {
-			log.Println("cloudflared stopped")
-		}
-		_ = tunnelCmd.Wait()
-	}
+	stopCloudflared(tunnelCmd)
 
 	return nil
 }
@@ -178,6 +171,40 @@ func shutdownServer(server *http.Server, cfg AppConfig) {
 		log.Printf("HTTP server shutdown error: %v", err)
 	} else {
 		log.Println("HTTP server stopped")
+	}
+}
+
+func stopCloudflared(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		log.Printf("cloudflared interrupt error: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			log.Printf("cloudflared stopped: %v", err)
+		} else {
+			log.Println("cloudflared stopped")
+		}
+	case <-time.After(3 * time.Second):
+		log.Println("cloudflared did not stop after interrupt; killing")
+		if err := cmd.Process.Kill(); err != nil {
+			log.Printf("cloudflared kill error: %v", err)
+		}
+		if err := <-done; err != nil {
+			log.Printf("cloudflared stopped: %v", err)
+		} else {
+			log.Println("cloudflared stopped")
+		}
 	}
 }
 
