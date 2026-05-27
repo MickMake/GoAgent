@@ -11,9 +11,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"io"
-	"log"
 	"net/http"
-	"path/filepath"
 	"runtime"
 )
 
