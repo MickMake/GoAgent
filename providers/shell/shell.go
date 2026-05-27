@@ -13,13 +13,12 @@ import (
 type Middleware func(http.HandlerFunc) http.HandlerFunc
 
 type Endpoint struct {
-	Endpoint string   `json:"endpoint"`
-	Command  string   `json:"command"`
-	Args     []string `json:"args"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 type Config struct {
-	Endpoints []Endpoint `json:"endpoints"`
+	Endpoints map[string]Endpoint `json:"endpoints"`
 }
 
 type Response struct {
@@ -34,18 +33,16 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 		return err
 	}
 
-	for _, endpoint := range cfg.Endpoints {
+	for endpointName, endpoint := range cfg.Endpoints {
 		ep := endpoint
-		path := ep.Endpoint
-		if !strings.HasPrefix(path, "/") {
-			path = "/" + path
-		}
+		name := strings.Trim(endpointName, "/")
+		path := "/shell/" + name
 
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
 			out, err := exec.Command(ep.Command, ep.Args...).CombinedOutput()
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, Response{
-					Endpoint: ep.Endpoint,
+					Endpoint: path,
 					Error:    err.Error(),
 					Output:   strings.TrimSpace(string(out)),
 				})
@@ -53,7 +50,7 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 			}
 
 			writeJSON(w, http.StatusOK, Response{
-				Endpoint: ep.Endpoint,
+				Endpoint: path,
 				Output:   strings.TrimSpace(string(out)),
 			})
 		}))
