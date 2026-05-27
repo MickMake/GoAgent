@@ -80,12 +80,11 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 }
 
 func cloudflaredDownloadURL(goos, assetName string) string {
-	version := "latest"
 	if isMacOSCatalina(goos) {
-		version = cloudflaredCatalinaVersion
-		log.Printf("macOS Catalina detected; using cloudflared %s", version)
+		log.Printf("macOS Catalina detected; using cloudflared %s", cloudflaredCatalinaVersion)
+		return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/download/%s/%s", cloudflaredCatalinaVersion, assetName)
 	}
-	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/%s/download/%s", version, assetName)
+	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
 }
 
 func isMacOSCatalina(goos string) bool {
