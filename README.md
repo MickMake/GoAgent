@@ -37,6 +37,32 @@ The service intentionally only listens locally:
 
 Cloudflare Tunnel exposes it safely without opening inbound ports.
 
+## GoAgent directory layout
+
+All GoAgent state lives under:
+
+```text
+~/.GoAgent/
+```
+
+Structure:
+
+```text
+~/.GoAgent/
+├── cache/
+│   └── cloudflared
+└── future-chaos/
+```
+
+This keeps:
+
+- config
+- cache
+- downloaded binaries
+- future persistent state
+
+contained in one predictable Unixy location.
+
 ## Requirements
 
 Debian/Ubuntu:
@@ -91,16 +117,8 @@ https://something-random.trycloudflare.com
 
 GoAgent caches downloaded binaries in:
 
-### Linux/macOS
-
 ```text
-~/.cache/goagent/
-```
-
-### Windows
-
-```text
-%LocalAppData%\goagent\
+~/.GoAgent/cache/
 ```
 
 This avoids repeatedly downloading binaries like a caffeinated package manager.
