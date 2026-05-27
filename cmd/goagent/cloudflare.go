@@ -26,6 +26,8 @@ type CloudflareConfig struct {
 	LogLevel     string `json:"log_level"`
 }
 
+const cloudflaredCatalinaVersion = "2025.6.0"
+
 var cloudflareTunnelURLPattern = regexp.MustCompile(`https://[-a-zA-Z0-9]+\.trycloudflare\.com`)
 
 func ensureCloudflared(cfg AppConfig) (string, error) {
@@ -54,7 +56,7 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		}
 	}
 
-	downloadURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
+	downloadURL := cloudflaredDownloadURL(runtime.GOOS, assetName)
 	log.Printf("downloading cloudflared from %s", downloadURL)
 	if archive {
 		if err := downloadAndExtractCloudflared(downloadURL, destination); err != nil {
@@ -75,6 +77,31 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		return "", fmt.Errorf("downloaded cloudflared failed validation: %w", err)
 	}
 	return destination, nil
+}
+
+func cloudflaredDownloadURL(goos, assetName string) string {
+	version := "latest"
+	if isMacOSCatalina(goos) {
+		version = cloudflaredCatalinaVersion
+		log.Printf("macOS Catalina detected; using cloudflared %s", version)
+	}
+	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/%s/download/%s", version, assetName)
+}
+
+func isMacOSCatalina(goos string) bool {
+	if goos != "darwin" {
+		return false
+	}
+	if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
+		version := strings.TrimSpace(string(out))
+		if strings.HasPrefix(version, "10.15.") || version == "10.15" {
+			return true
+		}
+	}
+	if out, err := exec.Command("uname", "-r").Output(); err == nil {
+		return strings.HasPrefix(strings.TrimSpace(string(out)), "19.")
+	}
+	return false
 }
 
 func effectiveCloudflaredArch(goos, goarch string) string {
