@@ -21,6 +21,12 @@ type Response struct {
 	Error string `json:"error,omitempty"`
 }
 
+type RootResponse struct {
+	Service   string   `json:"service"`
+	Status    string   `json:"status"`
+	Endpoints []string `json:"endpoints"`
+}
+
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -109,6 +115,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	defer stop()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", root)
 	mux.HandleFunc("/health", health)
 
 	protect := func(next http.HandlerFunc) http.HandlerFunc {
@@ -208,8 +215,41 @@ func stopCloudflared(cmd *exec.Cmd) {
 	}
 }
 
+func root(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	writeRootJSON(w, http.StatusOK, RootResponse{
+		Service: "GoAgent",
+		Status:  "ok",
+		Endpoints: []string{
+			"/",
+			"/health",
+			"/fortune",
+			"/fortune/config",
+			"/shell/{name}",
+		},
+	})
+}
+
 func health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Quote: "ok"})
+}
+
+func writeRootJSON(w http.ResponseWriter, status int, payload RootResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, err := fmt.Fprintf(w, `{"service":%q,"status":%q,"endpoints":[`, payload.Service, payload.Status); err != nil {
+		return
+	}
+	for index, endpoint := range payload.Endpoints {
+		if index > 0 {
+			_, _ = fmt.Fprint(w, ",")
+		}
+		_, _ = fmt.Fprintf(w, "%q", endpoint)
+	}
+	_, _ = fmt.Fprint(w, `]}`)
 }
 
 func fileExists(path string) bool {
