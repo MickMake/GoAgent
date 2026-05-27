@@ -33,7 +33,7 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		return "", err
 	}
 
-	assetName, archive, err := cloudflaredAssetName(runtime.GOOS, runtime.GOARCH)
+	assetName, archive, err := cloudflaredAssetName(runtime.GOOS, effectiveCloudflaredArch(runtime.GOOS, runtime.GOARCH))
 	if err != nil {
 		return "", err
 	}
@@ -42,7 +42,6 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		exeName += ".exe"
 	}
 	destination := filepath.Join(cfg.Global.CacheDir, exeName)
-	fmt.Println(destination)
 	if fileExists(destination) {
 		if err := validateCloudflared(destination); err == nil {
 			log.Printf("using cached cloudflared: %s", destination)
@@ -76,6 +75,24 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		return "", fmt.Errorf("downloaded cloudflared failed validation: %w", err)
 	}
 	return destination, nil
+}
+
+func effectiveCloudflaredArch(goos, goarch string) string {
+	if goos != "darwin" {
+		return goarch
+	}
+	out, err := exec.Command("uname", "-m").Output()
+	if err != nil {
+		return goarch
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "arm64", "aarch64":
+		return "arm64"
+	case "x86_64", "amd64":
+		return "amd64"
+	default:
+		return goarch
+	}
 }
 
 func validateCloudflared(path string) error {
