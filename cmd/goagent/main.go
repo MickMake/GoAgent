@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"time"
 
 	"github.com/MickMake/GoAgent/providers/fortune"
@@ -59,12 +57,6 @@ func main() {
 		}
 		return
 	default:
-		if strings.HasPrefix(command, "-") {
-			if err := runServeCommand(cfg, os.Args[1:]); err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
 		printHelp()
 		log.Fatalf("unknown command %q", command)
 	}
@@ -75,7 +67,7 @@ func printHelp() {
 
 Usage:
   GoAgent help
-  GoAgent serve [--listen <addr>] [--tunnel]
+  GoAgent serve
   GoAgent key create [name]
   GoAgent key ls
   GoAgent key rm <name>
@@ -88,27 +80,22 @@ Usage:
 
 Examples:
   GoAgent serve
-  GoAgent serve --listen 127.0.0.1:8080
   GoAgent key create
+  GoAgent config set listener.listen_addr 127.0.0.1:8080
   GoAgent config show`)
 }
 
 func runServeCommand(cfg AppConfig, args []string) error {
-	serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
-	tunnelFlag := serveFlags.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
-	listenFlag := serveFlags.String("listen", cfg.Listener.ListenAddr, "HTTP listen address")
-	if err := serveFlags.Parse(args); err != nil {
-		return err
+	if len(args) > 0 {
+		return fmt.Errorf("serve does not accept arguments; set runtime options in config")
 	}
-
-	cfg.Listener.ListenAddr = *listenFlag
 
 	apiKey, err := loadAPIKey(cfg)
 	if err != nil {
 		return err
 	}
 
-	tunnelRequested := *tunnelFlag || cfg.Cloudflare.Enabled
+	tunnelRequested := cfg.Cloudflare.Enabled
 	if cfg.Cloudflare.Mode == "disabled" {
 		tunnelRequested = false
 	}
