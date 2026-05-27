@@ -22,9 +22,11 @@ type Config struct {
 }
 
 type Response struct {
-	Endpoint string `json:"endpoint,omitempty"`
-	Output   string `json:"output,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Endpoint string   `json:"endpoint,omitempty"`
+	Command  string   `json:"command,omitempty"`
+	Args     []string `json:"args,omitempty"`
+	Output   string   `json:"output,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) error {
@@ -39,10 +41,21 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 		path := "/shell/" + name
 
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
-			out, err := exec.Command(ep.Command, ep.Args...).CombinedOutput()
+			resolvedArgs, err := resolveArgs(ep.Args, r)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, Response{
+					Endpoint: path,
+					Error:    err.Error(),
+				})
+				return
+			}
+
+			out, err := exec.Command(ep.Command, resolvedArgs...).CombinedOutput()
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, Response{
 					Endpoint: path,
+					Command:  ep.Command,
+					Args:     resolvedArgs,
 					Error:    err.Error(),
 					Output:   strings.TrimSpace(string(out)),
 				})
@@ -51,12 +64,36 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 
 			writeJSON(w, http.StatusOK, Response{
 				Endpoint: path,
+				Command:  ep.Command,
+				Args:     resolvedArgs,
 				Output:   strings.TrimSpace(string(out)),
 			})
 		}))
 	}
 
 	return nil
+}
+
+func resolveArgs(configuredArgs []string, r *http.Request) ([]string, error) {
+	resolved := make([]string, 0, len(configuredArgs))
+	query := r.URL.Query()
+
+	for _, arg := range configuredArgs {
+		if !strings.HasPrefix(arg, "$") || len(arg) == 1 {
+			resolved = append(resolved, arg)
+			continue
+		}
+
+		name := strings.TrimPrefix(arg, "$")
+		value := query.Get(name)
+		if value == "" {
+			return nil, fmt.Errorf("missing required query parameter %q", name)
+		}
+
+		resolved = append(resolved, value)
+	}
+
+	return resolved, nil
 }
 
 func loadConfig(providerBaseDir string) (Config, error) {
