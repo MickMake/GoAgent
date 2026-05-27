@@ -63,6 +63,11 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	case "show":
+		if err := runShowCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
 	default:
 		printHelp()
 		log.Fatalf("unknown command %q", command)
@@ -84,11 +89,13 @@ Usage:
   GoAgent config show
   GoAgent config set <section.key> <value>
   GoAgent config reset
+  GoAgent show schema [server-url]
 
 Examples:
   GoAgent serve
   GoAgent key create
   GoAgent config set listener.listen_addr 127.0.0.1:8080
+  GoAgent show schema https://example.trycloudflare.com
   GoAgent config show`)
 }
 
@@ -240,19 +247,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 func writeRootJSON(w http.ResponseWriter, status int, payload RootResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if _, err := fmt.Fprintf(w, `{"service":%q,"status":%q,"endpoints":[`, payload.Service, payload.Status); err != nil {
-		return
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("write JSON response: %v", err)
 	}
-	for index, endpoint := range payload.Endpoints {
-		if index > 0 {
-			_, _ = fmt.Fprint(w, ",")
-		}
-		_, _ = fmt.Fprintf(w, "%q", endpoint)
-	}
-	_, _ = fmt.Fprint(w, `]}`)
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
