@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,11 +15,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -45,14 +48,23 @@ var (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "key" {
-		if err := runKeyCommand(os.Args[2:]); err != nil {
-			log.Fatal(err)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "key":
+			if err := runAPIKeyCommand(os.Args[2:]); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "cloudflare":
+			if err := runCloudflareCommand(os.Args[2:]); err != nil {
+				log.Fatal(err)
+			}
+			return
 		}
-		return
 	}
 
 	tunnel := flag.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
+	listen := flag.String("listen", defaultListenAddr(), "HTTP listen address")
 	flag.Parse()
 
 	apiKey, err := loadAPIKey()
@@ -60,18 +72,78 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.HandleFunc("/health", health)
-	http.HandleFunc("/quote", requireAPIKey(apiKey, quote))
-	http.HandleFunc("/config", requireAPIKey(apiKey, config))
+	if err := runDaemon(*listen, apiKey, *tunnel); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	if *tunnel {
-		if err := startCloudflareTunnel("http://127.0.0.1:8080"); err != nil {
-			log.Fatalf("cloudflared tunnel failed: %v", err)
+func runDaemon(listenAddr, apiKey string, tunnel bool) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/quote", requireAPIKey(apiKey, quote))
+	mux.HandleFunc("/config", requireAPIKey(apiKey, config))
+
+	server := &http.Server{Addr: listenAddr, Handler: mux}
+
+	var tunnelCmd *exec.Cmd
+	if tunnel {
+		cmd, err := startCloudflareTunnel(ctx, listenAddr)
+		if err != nil {
+			return fmt.Errorf("cloudflared tunnel failed: %w", err)
 		}
+		tunnelCmd = cmd
 	}
 
-	log.Println("GoAgent listening on 127.0.0.1:8080")
-	log.Fatal(http.ListenAndServe("127.0.0.1:8080", nil))
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("GoAgent listening on %s", listenAddr)
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Println("shutdown requested")
+	case err := <-serverErr:
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	} else {
+		log.Println("HTTP server stopped")
+	}
+
+	if tunnelCmd != nil && tunnelCmd.Process != nil {
+		if err := tunnelCmd.Process.Kill(); err != nil {
+			log.Printf("cloudflared kill error: %v", err)
+		} else {
+			log.Println("cloudflared stopped")
+		}
+		_ = tunnelCmd.Wait()
+	}
+
+	return nil
+}
+
+func defaultListenAddr() string {
+	if value := strings.TrimSpace(os.Getenv("GOAGENT_LISTEN_ADDR")); value != "" {
+		return value
+	}
+	return "127.0.0.1:8080"
 }
 
 func health(w http.ResponseWriter, r *http.Request) {
@@ -107,29 +179,19 @@ func quote(w http.ResponseWriter, r *http.Request) {
 func config(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, 200, Response{
-			Endpoint:      "config",
-			Marker:        markerConfigGetEndpoint,
-			DefaultLength: getDefaultLength(),
-		})
+		writeJSON(w, 200, Response{Endpoint: "config", Marker: markerConfigGetEndpoint, DefaultLength: getDefaultLength()})
 	case http.MethodPost:
 		var req ConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 400, Response{Error: "invalid JSON body"})
 			return
 		}
-
 		if fortuneArgs(req.DefaultLength) == nil {
 			writeJSON(w, 400, Response{Error: "default_length must be short or long"})
 			return
 		}
-
 		setDefaultLength(req.DefaultLength)
-		writeJSON(w, 200, Response{
-			Endpoint:      "config",
-			Marker:        markerConfigPostEndpoint,
-			DefaultLength: getDefaultLength(),
-		})
+		writeJSON(w, 200, Response{Endpoint: "config", Marker: markerConfigPostEndpoint, DefaultLength: getDefaultLength()})
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
@@ -165,7 +227,6 @@ func requireAPIKey(expected string, next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-
 		next(w, r)
 	}
 }
@@ -180,50 +241,116 @@ func loadAPIKey() (string, error) {
 	if envKey := strings.TrimSpace(os.Getenv("GOAGENT_API_KEY")); envKey != "" {
 		return envKey, nil
 	}
-
-	key, err := readKey("default")
+	key, err := readNamedSecret(goagentAPIKeyPath("default"))
 	if err == nil && key != "" {
 		return key, nil
 	}
-
-	return "", errors.New("GOAGENT_API_KEY not set and ~/.GoAgent/keys/default.key not found; run: goagent key create")
+	return "", errors.New("GOAGENT_API_KEY not set and ~/.GoAgent/keys/goagent-default.key not found; run: goagent key create")
 }
 
-func runKeyCommand(args []string) error {
+func runAPIKeyCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: goagent key create [name] | goagent key ls | goagent key rm <name>")
 	}
-
 	switch args[0] {
 	case "create":
 		name := "default"
 		if len(args) > 1 {
 			name = args[1]
 		}
-		return createKey(name)
+		return createGeneratedSecret("goagent", goagentAPIKeyPath, name, true)
 	case "ls":
-		return listKeys()
+		return listSecrets("goagent", ".key")
 	case "rm":
 		if len(args) < 2 {
 			return errors.New("usage: goagent key rm <name>")
 		}
-		return removeKey(args[1])
+		return removeSecret("goagent", goagentAPIKeyPath, args[1])
 	default:
 		return fmt.Errorf("unknown key command %q", args[0])
 	}
 }
 
-func createKey(name string) error {
-	name, err := cleanKeyName(name)
+func runCloudflareCommand(args []string) error {
+	if len(args) < 1 || args[0] != "token" {
+		return errors.New("usage: goagent cloudflare token add [name] <token> | goagent cloudflare token ls | goagent cloudflare token rm <name>")
+	}
+	if len(args) < 2 {
+		return errors.New("usage: goagent cloudflare token add [name] <token> | goagent cloudflare token ls | goagent cloudflare token rm <name>")
+	}
+	switch args[1] {
+	case "add":
+		name := "default"
+		var token string
+		if len(args) == 3 {
+			token = args[2]
+		} else if len(args) == 4 {
+			name = args[2]
+			token = args[3]
+		} else {
+			return errors.New("usage: goagent cloudflare token add [name] <token>")
+		}
+		return createProvidedSecret("cloudflare", cloudflareTokenPath, name, token)
+	case "ls":
+		return listSecrets("cloudflare", ".token")
+	case "rm":
+		if len(args) < 3 {
+			return errors.New("usage: goagent cloudflare token rm <name>")
+		}
+		return removeSecret("cloudflare", cloudflareTokenPath, args[2])
+	default:
+		return fmt.Errorf("unknown cloudflare token command %q", args[1])
+	}
+}
+
+func startCloudflareTunnel(ctx context.Context, listenAddr string) (*exec.Cmd, error) {
+	cloudflaredPath, err := ensureCloudflared()
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{"tunnel"}
+	if token, err := readNamedSecret(cloudflareTokenPath("default")); err == nil && token != "" {
+		args = append(args, "run", "--token", token)
+		log.Println("starting named Cloudflare tunnel using default token")
+	} else {
+		args = append(args, "--url", "http://"+listenAddr)
+		log.Println("starting temporary Cloudflare tunnel")
+	}
+
+	cmd := exec.CommandContext(ctx, cloudflaredPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	log.Printf("cloudflared started with pid %d", cmd.Process.Pid)
+	return cmd, nil
+}
+
+func createGeneratedSecret(kind string, pathFunc func(string) string, name string, printValue bool) error {
+	secret, err := generateAPIKey()
 	if err != nil {
 		return err
 	}
+	if err := createProvidedSecret(kind, pathFunc, name, secret); err != nil {
+		return err
+	}
+	if printValue {
+		fmt.Printf("X-API-Key: %s\n", secret)
+	}
+	return nil
+}
 
-	key, err := generateAPIKey()
+func createProvidedSecret(kind string, pathFunc func(string) string, name string, secret string) error {
+	name, err := cleanSecretName(name)
 	if err != nil {
 		return err
 	}
-
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return errors.New("secret cannot be empty")
+	}
 	keysDir, err := goagentKeysDir()
 	if err != nil {
 		return err
@@ -231,79 +358,70 @@ func createKey(name string) error {
 	if err := os.MkdirAll(keysDir, 0o700); err != nil {
 		return err
 	}
-
-	path := keyPath(name)
+	path := pathFunc(name)
 	if fileExists(path) {
-		return fmt.Errorf("key %q already exists: %s", name, path)
+		return fmt.Errorf("%s credential %q already exists: %s", kind, name, path)
 	}
-
-	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
 		return err
 	}
-
-	fmt.Printf("created key %q: %s\n", name, path)
-	fmt.Printf("X-API-Key: %s\n", key)
+	fmt.Printf("created %s credential %q: %s\n", kind, name, path)
 	return nil
 }
 
-func listKeys() error {
+func listSecrets(prefix, suffix string) error {
 	keysDir, err := goagentKeysDir()
 	if err != nil {
 		return err
 	}
-
 	entries, err := os.ReadDir(keysDir)
 	if errors.Is(err, os.ErrNotExist) {
-		fmt.Println("no keys found")
+		fmt.Println("no credentials found")
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-
-	keys := []string{}
+	needlePrefix := prefix + "-"
+	items := []string{}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		name := entry.Name()
-		if strings.HasSuffix(name, ".key") {
-			keys = append(keys, strings.TrimSuffix(name, ".key"))
+		fileName := entry.Name()
+		if strings.HasPrefix(fileName, needlePrefix) && strings.HasSuffix(fileName, suffix) {
+			name := strings.TrimSuffix(strings.TrimPrefix(fileName, needlePrefix), suffix)
+			items = append(items, name)
 		}
 	}
-
-	if len(keys) == 0 {
-		fmt.Println("no keys found")
+	if len(items) == 0 {
+		fmt.Println("no credentials found")
 		return nil
 	}
-
-	sort.Strings(keys)
-	for _, key := range keys {
-		fmt.Println(key)
+	sort.Strings(items)
+	for _, item := range items {
+		fmt.Println(item)
 	}
 	return nil
 }
 
-func removeKey(name string) error {
-	name, err := cleanKeyName(name)
+func removeSecret(kind string, pathFunc func(string) string, name string) error {
+	name, err := cleanSecretName(name)
 	if err != nil {
 		return err
 	}
-
-	path := keyPath(name)
+	path := pathFunc(name)
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("key %q does not exist", name)
+			return fmt.Errorf("%s credential %q does not exist", kind, name)
 		}
 		return err
 	}
-
-	fmt.Printf("removed key %q\n", name)
+	fmt.Printf("removed %s credential %q\n", kind, name)
 	return nil
 }
 
-func readKey(name string) (string, error) {
-	path := keyPath(name)
+func readNamedSecret(path string) (string, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -319,44 +437,34 @@ func generateAPIKey() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func cleanKeyName(name string) (string, error) {
+func cleanSecretName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", errors.New("key name cannot be empty")
+		return "", errors.New("credential name cannot be empty")
 	}
 	if name != filepath.Base(name) {
-		return "", errors.New("key name must not contain path separators")
+		return "", errors.New("credential name must not contain path separators")
 	}
 	if strings.Contains(name, "..") {
-		return "", errors.New("key name must not contain '..'")
+		return "", errors.New("credential name must not contain '..'")
 	}
 	return name, nil
 }
 
-func keyPath(name string) string {
-	keysDir, err := goagentKeysDir()
-	if err != nil {
-		return filepath.Join(".", name+".key")
-	}
-	return filepath.Join(keysDir, name+".key")
+func goagentAPIKeyPath(name string) string {
+	return filepath.Join(mustKeysDir(), "goagent-"+name+".key")
 }
 
-func startCloudflareTunnel(url string) error {
-	cloudflaredPath, err := ensureCloudflared()
+func cloudflareTokenPath(name string) string {
+	return filepath.Join(mustKeysDir(), "cloudflare-"+name+".token")
+}
+
+func mustKeysDir() string {
+	keysDir, err := goagentKeysDir()
 	if err != nil {
-		return err
+		return "."
 	}
-
-	cmd := exec.Command(cloudflaredPath, "tunnel", "--url", url)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	log.Printf("cloudflared started with pid %d", cmd.Process.Pid)
-	return nil
+	return keysDir
 }
 
 func ensureCloudflared() (string, error) {
@@ -364,7 +472,6 @@ func ensureCloudflared() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return "", err
 	}
@@ -373,12 +480,10 @@ func ensureCloudflared() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	exeName := "cloudflared"
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
 	}
-
 	destination := filepath.Join(cacheDir, exeName)
 	if fileExists(destination) {
 		log.Printf("using cached cloudflared: %s", destination)
@@ -387,7 +492,6 @@ func ensureCloudflared() (string, error) {
 
 	downloadURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
 	log.Printf("downloading cloudflared from %s", downloadURL)
-
 	if archive {
 		if err := downloadAndExtractCloudflared(downloadURL, destination); err != nil {
 			return "", err
@@ -397,13 +501,11 @@ func ensureCloudflared() (string, error) {
 			return "", err
 		}
 	}
-
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(destination, 0o755); err != nil {
 			return "", err
 		}
 	}
-
 	return destination, nil
 }
 
@@ -412,7 +514,6 @@ func goagentDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return filepath.Join(home, ".GoAgent"), nil
 }
 
@@ -421,7 +522,6 @@ func goagentCacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return filepath.Join(base, "cache"), nil
 }
 
@@ -430,7 +530,6 @@ func goagentKeysDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return filepath.Join(base, "keys"), nil
 }
 
@@ -462,7 +561,6 @@ func cloudflaredAssetName(goos, goarch string) (string, bool, error) {
 			return "cloudflared-windows-386.exe", false, nil
 		}
 	}
-
 	return "", false, fmt.Errorf("unsupported platform: %s/%s", goos, goarch)
 }
 
@@ -472,17 +570,14 @@ func downloadFile(url, destination string) error {
 		return err
 	}
 	defer response.Body.Close()
-
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: %s", response.Status)
 	}
-
 	tempFile := destination + ".tmp"
 	out, err := os.Create(tempFile)
 	if err != nil {
 		return err
 	}
-
 	_, copyErr := io.Copy(out, response.Body)
 	closeErr := out.Close()
 	if copyErr != nil {
@@ -491,7 +586,6 @@ func downloadFile(url, destination string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-
 	return os.Rename(tempFile, destination)
 }
 
@@ -501,11 +595,9 @@ func downloadAndExtractCloudflared(url, destination string) error {
 		return err
 	}
 	defer response.Body.Close()
-
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: %s", response.Status)
 	}
-
 	gzipReader, err := gzip.NewReader(response.Body)
 	if err != nil {
 		return err
@@ -521,21 +613,14 @@ func downloadAndExtractCloudflared(url, destination string) error {
 		if err != nil {
 			return err
 		}
-
-		if header.Typeflag != tar.TypeReg {
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "cloudflared" {
 			continue
 		}
-
-		if filepath.Base(header.Name) != "cloudflared" {
-			continue
-		}
-
 		tempFile := destination + ".tmp"
 		out, err := os.Create(tempFile)
 		if err != nil {
 			return err
 		}
-
 		_, copyErr := io.Copy(out, tarReader)
 		closeErr := out.Close()
 		if copyErr != nil {
@@ -544,10 +629,8 @@ func downloadAndExtractCloudflared(url, destination string) error {
 		if closeErr != nil {
 			return closeErr
 		}
-
 		return os.Rename(tempFile, destination)
 	}
-
 	return errors.New("cloudflared binary not found in archive")
 }
 
