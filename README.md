@@ -10,6 +10,7 @@ Built from a tractor in a field, which feels important architecturally.
 - API key authentication
 - Runtime config endpoint
 - Configurable default quote mode
+- Endpoint marker strings for ChatGPT testing
 - Local-only listener
 - Designed for Cloudflare Tunnel exposure
 - Tiny and gloriously boring
@@ -56,6 +57,22 @@ Expected output:
 GoAgent listening on :8080
 ```
 
+## Endpoint markers
+
+These markers exist purely to verify that ChatGPT actually called a specific endpoint.
+
+| Endpoint | Marker |
+|---|---|
+| `GET /quote` | `GOAGENT_QUOTE_ENDPOINT_REACHED` |
+| `GET /config` | `GOAGENT_CONFIG_GET_ENDPOINT_REACHED` |
+| `POST /config` | `GOAGENT_CONFIG_POST_ENDPOINT_REACHED` |
+
+Recommended Custom GPT instruction:
+
+```text
+When GoAgent returns a marker field, include it verbatim in your response.
+```
+
 ## Endpoints
 
 ### Health check
@@ -96,6 +113,8 @@ Example response:
 
 ```json
 {
+  "endpoint": "quote",
+  "marker": "GOAGENT_QUOTE_ENDPOINT_REACHED",
   "quote": "A witty Unix fortune appears here.",
   "default_length": "short"
 }
@@ -127,6 +146,8 @@ Example response:
 
 ```json
 {
+  "endpoint": "config",
+  "marker": "GOAGENT_CONFIG_GET_ENDPOINT_REACHED",
   "default_length": "short"
 }
 ```
@@ -140,6 +161,16 @@ curl \
   -H "X-API-Key: replace-me" \
   -d '{"default_length":"long"}' \
   'http://127.0.0.1:8080/config'
+```
+
+Example response:
+
+```json
+{
+  "endpoint": "config",
+  "marker": "GOAGENT_CONFIG_POST_ENDPOINT_REACHED",
+  "default_length": "long"
+}
 ```
 
 ### Change default to short
@@ -217,6 +248,7 @@ ChatGPT can:
 - request quotes
 - read current config
 - change default quote behaviour
+- verify which endpoint was called
 
 without directly accessing your server.
 
