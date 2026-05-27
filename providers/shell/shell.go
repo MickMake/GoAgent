@@ -15,6 +15,7 @@ type Middleware func(http.HandlerFunc) http.HandlerFunc
 type Endpoint struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+	Chroot  string   `json:"chroot,omitempty"`
 }
 
 type Config struct {
@@ -25,6 +26,7 @@ type Response struct {
 	Endpoint string   `json:"endpoint,omitempty"`
 	Command  string   `json:"command,omitempty"`
 	Args     []string `json:"args,omitempty"`
+	Chroot   string   `json:"chroot,omitempty"`
 	Output   string   `json:"output,omitempty"`
 	Error    string   `json:"error,omitempty"`
 }
@@ -40,6 +42,11 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 		name := strings.Trim(endpointName, "/")
 		path := "/shell/" + name
 
+		command, chroot, err := validateEndpoint(ep)
+		if err != nil {
+			return fmt.Errorf("invalid shell endpoint %q: %w", endpointName, err)
+		}
+
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
 			resolvedArgs, err := resolveArgs(ep.Args, r)
 			if err != nil {
@@ -50,12 +57,25 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 				return
 			}
 
-			out, err := exec.Command(ep.Command, resolvedArgs...).CombinedOutput()
+			cmd := exec.Command(command, resolvedArgs...)
+			if err := applyChroot(cmd, chroot); err != nil {
+				writeJSON(w, http.StatusInternalServerError, Response{
+					Endpoint: path,
+					Command:  command,
+					Args:     resolvedArgs,
+					Chroot:   chroot,
+					Error:    err.Error(),
+				})
+				return
+			}
+
+			out, err := cmd.CombinedOutput()
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, Response{
 					Endpoint: path,
-					Command:  ep.Command,
+					Command:  command,
 					Args:     resolvedArgs,
+					Chroot:   chroot,
 					Error:    err.Error(),
 					Output:   strings.TrimSpace(string(out)),
 				})
@@ -64,14 +84,32 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 
 			writeJSON(w, http.StatusOK, Response{
 				Endpoint: path,
-				Command:  ep.Command,
+				Command:  command,
 				Args:     resolvedArgs,
+				Chroot:   chroot,
 				Output:   strings.TrimSpace(string(out)),
 			})
 		}))
 	}
 
 	return nil
+}
+
+func validateEndpoint(endpoint Endpoint) (string, string, error) {
+	command := expandPath(endpoint.Command)
+	if !filepath.IsAbs(command) {
+		return "", "", fmt.Errorf("command must be an absolute path or start with ~/; got %q", endpoint.Command)
+	}
+
+	chroot := strings.TrimSpace(endpoint.Chroot)
+	if chroot != "" {
+		chroot = expandPath(chroot)
+		if !filepath.IsAbs(chroot) {
+			return "", "", fmt.Errorf("chroot must be an absolute path or start with ~/; got %q", endpoint.Chroot)
+		}
+	}
+
+	return filepath.Clean(command), filepath.Clean(chroot), nil
 }
 
 func resolveArgs(configuredArgs []string, r *http.Request) ([]string, error) {
@@ -112,6 +150,25 @@ func loadConfig(providerBaseDir string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func expandPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+	}
+	return path
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload Response) {
