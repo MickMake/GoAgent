@@ -14,7 +14,7 @@ type CloudflareConfig struct {
 	DefaultToken        string `json:"default_token"`
 	Enabled       bool   `json:"enabled"`
 	Mode          string `json:"mode"`
-	LogLevel string `json:"cloudflared_log_level"`
+	LogLevel string `json:"log_level"`
 }
 
 func runTokenCommand(cfg AppConfig, args []string) error {
