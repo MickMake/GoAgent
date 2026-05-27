@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 type CloudflareConfig struct {
@@ -42,8 +43,15 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 	}
 	destination := filepath.Join(cfg.Global.CacheDir, exeName)
 	if fileExists(destination) {
-		log.Printf("using cached cloudflared: %s", destination)
-		return destination, nil
+		if err := validateCloudflared(destination); err == nil {
+			log.Printf("using cached cloudflared: %s", destination)
+			return destination, nil
+		} else {
+			log.Printf("cached cloudflared failed validation and will be replaced: %v", err)
+			if removeErr := os.Remove(destination); removeErr != nil {
+				return "", fmt.Errorf("remove invalid cached cloudflared: %w", removeErr)
+			}
+		}
 	}
 
 	downloadURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
@@ -62,7 +70,28 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 			return "", err
 		}
 	}
+	if err := validateCloudflared(destination); err != nil {
+		_ = os.Remove(destination)
+		return "", fmt.Errorf("downloaded cloudflared failed validation: %w", err)
+	}
 	return destination, nil
+}
+
+func validateCloudflared(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return fmt.Errorf("%s --version failed: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return fmt.Errorf("%s --version returned empty output", path)
+	}
+	return nil
 }
 
 func cloudflaredAssetName(goos, goarch string) (string, bool, error) {
