@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	markerQuoteEndpoint      = "GOAGENT_QUOTE_ENDPOINT_REACHED"
-	markerConfigGetEndpoint  = "GOAGENT_CONFIG_GET_ENDPOINT_REACHED"
-	markerConfigPostEndpoint = "GOAGENT_CONFIG_POST_ENDPOINT_REACHED"
+	markerQuoteEndpoint      = "GOAGENT_FORTUNE_ENDPOINT_REACHED"
+	markerConfigGetEndpoint  = "GOAGENT_FORTUNE_CONFIG_GET_ENDPOINT_REACHED"
+	markerConfigPostEndpoint = "GOAGENT_FORTUNE_CONFIG_POST_ENDPOINT_REACHED"
 )
 
 type Middleware func(http.HandlerFunc) http.HandlerFunc
@@ -35,8 +35,8 @@ var (
 
 func Register(mux *http.ServeMux, protect Middleware, initialDefaultLength string) {
 	setDefaultLength(initialDefaultLength)
-	mux.HandleFunc("/quote", protect(quote))
-	mux.HandleFunc("/config", protect(config))
+	mux.HandleFunc("/fortune", protect(quote))
+	mux.HandleFunc("/fortune/config", protect(config))
 }
 
 func quote(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +58,7 @@ func quote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, Response{
-		Endpoint:      "quote",
+		Endpoint:      "/fortune",
 		Marker:        markerQuoteEndpoint,
 		Quote:         strings.TrimSpace(string(out)),
 		DefaultLength: getDefaultLength(),
@@ -68,7 +68,7 @@ func quote(w http.ResponseWriter, r *http.Request) {
 func config(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, Response{Endpoint: "config", Marker: markerConfigGetEndpoint, DefaultLength: getDefaultLength()})
+		writeJSON(w, http.StatusOK, Response{Endpoint: "/fortune/config", Marker: markerConfigGetEndpoint, DefaultLength: getDefaultLength()})
 	case http.MethodPost:
 		var req ConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -80,7 +80,7 @@ func config(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		setDefaultLength(req.DefaultLength)
-		writeJSON(w, http.StatusOK, Response{Endpoint: "config", Marker: markerConfigPostEndpoint, DefaultLength: getDefaultLength()})
+		writeJSON(w, http.StatusOK, Response{Endpoint: "/fortune/config", Marker: markerConfigPostEndpoint, DefaultLength: getDefaultLength()})
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
