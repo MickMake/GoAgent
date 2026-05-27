@@ -321,11 +321,6 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	}
 	go relayCloudflaredOutput(stdout, os.Stdout, urlOnce)
 	go relayCloudflaredOutput(stderr, os.Stderr, urlOnce)
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			log.Printf("cloudflared exited: %v", err)
-		}
-	}()
 	log.Printf("cloudflared started with pid %d", cmd.Process.Pid)
 	return cmd, nil
 }
