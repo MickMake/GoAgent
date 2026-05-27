@@ -1,67 +1,42 @@
 # GoAgent
 
-Minimal Go-based quote daemon for ChatGPT Actions experiments.
+Minimal Go-based local agent for ChatGPT integration experiments.
 
 Built from a tractor in a field, which feels important architecturally.
 
+GoAgent runs a small HTTP service on your machine, protects it with an `X-API-Key` header, and can expose it through Cloudflare Tunnel so ChatGPT can call it safely without opening inbound firewall ports.
+
 ## Features
 
-- Unix `fortune` integration
+- Local HTTP listener
 - API key authentication
-- Runtime config endpoint
-- Configurable default quote mode
-- Endpoint marker strings for ChatGPT testing
-- Auto-download Cloudflare Tunnel support
-- Automatic OS/architecture detection
-- Local-only listener
-- Designed for Cloudflare Tunnel exposure
-- Tiny and gloriously boring
+- Persistent config under `~/.GoAgent/`
+- Stored API keys under `~/.GoAgent/keys/`
+- Cloudflare Tunnel support
+- Cloudflare tunnel token storage
+- Auto-download and cache of `cloudflared`
+- Fortune provider: `/fortune`
+- Optional shell provider: `/shell/<name>`
+- Designed for ChatGPT Actions and Skill-guided workflows
+- Tiny and gloriously boring, which is often where reliability hides
 
 ## Architecture
 
 ```text
-ChatGPT Action
-    ↓ HTTPS
-Cloudflare Tunnel
-    ↓
-GoAgent on localhost:8080
-    ↓
-fortune
+ChatGPT
+  -> Custom GPT Action / tool call
+  -> HTTPS Cloudflare Tunnel
+  -> GoAgent on localhost
+  -> provider endpoint
 ```
 
-The service intentionally only listens locally:
+Default local listener:
 
 ```text
 127.0.0.1:8080
 ```
 
-Cloudflare Tunnel exposes it safely without opening inbound ports.
-
-## GoAgent directory layout
-
-All GoAgent state lives under:
-
-```text
-~/.GoAgent/
-```
-
-Structure:
-
-```text
-~/.GoAgent/
-├── cache/
-│   └── cloudflared
-└── future-chaos/
-```
-
-This keeps:
-
-- config
-- cache
-- downloaded binaries
-- future persistent state
-
-contained in one predictable Unixy location.
+Cloudflare Tunnel exposes the local listener over HTTPS without requiring public inbound ports.
 
 ## Requirements
 
@@ -71,59 +46,259 @@ Debian/Ubuntu:
 sudo apt install golang fortune-mod
 ```
 
-No manual cloudflared installation is required when using `--tunnel`.
-
-## Run
-
-### Standard mode
+Build from source:
 
 ```bash
-export GOAGENT_API_KEY="replace-me"
-
-go run ./cmd/goagent
+go build -o GoAgent ./cmd/goagent
 ```
 
-### Tunnel mode
-
-Automatically:
-
-- detects OS/architecture
-- downloads official `cloudflared`
-- caches it locally
-- launches the tunnel
+Run commands below with either the built binary:
 
 ```bash
-export GOAGENT_API_KEY="replace-me"
-
-go run ./cmd/goagent --tunnel
+./GoAgent help
 ```
 
-Expected output:
+or directly with Go:
+
+```bash
+go run ./cmd/goagent -- help
+```
+
+The examples below use `GoAgent` as the command name. Substitute `./GoAgent` or `go run ./cmd/goagent --` as needed.
+
+## GoAgent state directory
+
+GoAgent stores state under:
 
 ```text
-GoAgent listening on 127.0.0.1:8080
-cloudflared started with pid 12345
+~/.GoAgent/
 ```
 
-Cloudflare will then emit a public HTTPS endpoint.
-
-Example:
+Typical layout:
 
 ```text
-https://something-random.trycloudflare.com
+~/.GoAgent/
+├── config.json
+├── cache/
+│   └── cloudflared
+├── keys/
+│   ├── GoAgent-default.key
+│   └── token-default.token
+└── providers/
+    └── shell/
+        └── config.json
 ```
 
-## cloudflared cache location
+This keeps config, credentials, cache, downloaded binaries, and provider state in one predictable place. A tiny kingdom, but at least the roads are labelled.
 
-GoAgent caches downloaded binaries in:
+## Quick start
+
+Generate an API key:
+
+```bash
+GoAgent key create
+```
+
+That prints a value like:
+
+```text
+X-API-Key: <generated-key>
+```
+
+Start the daemon:
+
+```bash
+GoAgent serve
+```
+
+Check health locally:
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+Call the fortune provider:
+
+```bash
+curl \
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/fortune?length=short'
+```
+
+## CLI commands
+
+```text
+GoAgent help
+GoAgent serve
+GoAgent key create [name]
+GoAgent key ls
+GoAgent key rm <name>
+GoAgent token add [name] <token>
+GoAgent token ls
+GoAgent token rm <name>
+GoAgent config show
+GoAgent config set <section.key> <value>
+GoAgent config reset
+```
+
+`GoAgent` with no arguments prints help.
+
+`GoAgent serve` starts the daemon. Runtime options such as listen address and Cloudflare tunnel behaviour are read from config only.
+
+## GoAgent config
+
+Show current config:
+
+```bash
+GoAgent config show
+```
+
+Reset config to defaults:
+
+```bash
+GoAgent config reset
+```
+
+Set the local listen address:
+
+```bash
+GoAgent config set listener.listen_addr 127.0.0.1:8080
+```
+
+Set the default API key name:
+
+```bash
+GoAgent config set listener.default_api_key default
+```
+
+Set the default fortune quote length:
+
+```bash
+GoAgent config set listener.default_quote_length short
+```
+
+Valid quote lengths:
+
+```text
+short
+long
+```
+
+Set directories:
+
+```bash
+GoAgent config set global.cache_dir ~/.GoAgent/cache
+GoAgent config set global.key_dir ~/.GoAgent/keys
+GoAgent config set global.provider_base_dir ~/.GoAgent/providers
+```
+
+Set shutdown timeout:
+
+```bash
+GoAgent config set global.shutdown_timeout_seconds 5
+```
+
+### Example config
+
+```json
+{
+  "global": {
+    "cache_dir": "/home/mick/.GoAgent/cache",
+    "key_dir": "/home/mick/.GoAgent/keys",
+    "provider_base_dir": "/home/mick/.GoAgent/providers",
+    "shutdown_timeout_seconds": 5
+  },
+  "listener": {
+    "listen_addr": "127.0.0.1:8080",
+    "default_api_key": "default",
+    "default_quote_length": "short"
+  },
+  "cloudflare": {
+    "default_token": "default",
+    "enabled": false,
+    "mode": "auto",
+    "log_level": "info"
+  }
+}
+```
+
+The config command accepts these Cloudflare keys:
+
+```text
+cloudflare.default_token
+cloudflare.tunnel_enabled
+cloudflare.tunnel_mode
+cloudflare.cloudflared_log_level
+```
+
+The JSON config currently stores those values as:
+
+```json
+{
+  "default_token": "default",
+  "enabled": false,
+  "mode": "auto",
+  "log_level": "info"
+}
+```
+
+## API keys
+
+Create the default API key:
+
+```bash
+GoAgent key create
+```
+
+Create a named API key:
+
+```bash
+GoAgent key create workbench
+```
+
+List API keys:
+
+```bash
+GoAgent key ls
+```
+
+Remove an API key:
+
+```bash
+GoAgent key rm workbench
+```
+
+Use a named key by setting the default key name:
+
+```bash
+GoAgent config set listener.default_api_key workbench
+```
+
+API keys are stored as files under the configured `global.key_dir`:
+
+```text
+~/.GoAgent/keys/GoAgent-default.key
+~/.GoAgent/keys/GoAgent-workbench.key
+```
+
+GoAgent also supports `GOAGENT_API_KEY` for quick testing. If that environment variable is set, it overrides the stored key file:
+
+```bash
+export GOAGENT_API_KEY='<generated-key>'
+GoAgent serve
+```
+
+For normal use, stored keys are cleaner. Environment variables are like sticky notes: useful, but eventually found stuck to a cat.
+
+## Cloudflare Tunnel
+
+GoAgent can run `cloudflared` for you. It auto-detects your OS and architecture, downloads the matching official `cloudflared` binary, and caches it under:
 
 ```text
 ~/.GoAgent/cache/
 ```
 
-This avoids repeatedly downloading binaries like a caffeinated package manager.
-
-## Supported platforms
+Supported platforms:
 
 | OS | Architectures |
 |---|---|
@@ -131,20 +306,99 @@ This avoids repeatedly downloading binaries like a caffeinated package manager.
 | macOS | amd64, arm64 |
 | Windows | amd64, 386 |
 
-## Endpoint markers
+### Temporary tunnel mode
 
-These markers exist purely to verify that ChatGPT actually called a specific endpoint.
+Temporary mode does not require a Cloudflare account token. It creates a random `trycloudflare.com` URL each time.
 
-| Endpoint | Marker |
-|---|---|
-| `GET /quote` | `GOAGENT_QUOTE_ENDPOINT_REACHED` |
-| `GET /config` | `GOAGENT_CONFIG_GET_ENDPOINT_REACHED` |
-| `POST /config` | `GOAGENT_CONFIG_POST_ENDPOINT_REACHED` |
+```bash
+GoAgent config set cloudflare.tunnel_enabled true
+GoAgent config set cloudflare.tunnel_mode temporary
+GoAgent serve
+```
 
-Recommended Custom GPT instruction:
+Expected logs include something like:
 
 ```text
-When GoAgent returns a marker field, include it verbatim in your response.
+GoAgent listening on 127.0.0.1:8080
+starting temporary Cloudflare tunnel
+cloudflared started with pid 12345
+```
+
+`cloudflared` will print the public HTTPS URL.
+
+### Authenticated tunnel mode
+
+Authenticated mode uses a Cloudflare tunnel token.
+
+High-level Cloudflare setup:
+
+1. In Cloudflare Zero Trust, create a Tunnel.
+2. Choose the `cloudflared` connector option.
+3. Copy the generated tunnel token.
+4. Store that token in GoAgent.
+5. Enable Cloudflare tunnel mode in GoAgent config.
+
+Store the default token:
+
+```bash
+GoAgent token add default '<cloudflare-tunnel-token>'
+```
+
+Or store a named token:
+
+```bash
+GoAgent token add workshop '<cloudflare-tunnel-token>'
+GoAgent config set cloudflare.default_token workshop
+```
+
+Enable authenticated tunnel mode:
+
+```bash
+GoAgent config set cloudflare.tunnel_enabled true
+GoAgent config set cloudflare.tunnel_mode authenticated
+GoAgent config set cloudflare.cloudflared_log_level info
+GoAgent serve
+```
+
+List stored Cloudflare tokens:
+
+```bash
+GoAgent token ls
+```
+
+Remove a stored token:
+
+```bash
+GoAgent token rm workshop
+```
+
+Stored tokens live under:
+
+```text
+~/.GoAgent/keys/token-default.token
+~/.GoAgent/keys/token-workshop.token
+```
+
+### Auto mode
+
+Auto mode uses a stored token if one exists. If no token is available, it falls back to a temporary tunnel.
+
+```bash
+GoAgent config set cloudflare.tunnel_enabled true
+GoAgent config set cloudflare.tunnel_mode auto
+GoAgent serve
+```
+
+Disable tunnel startup:
+
+```bash
+GoAgent config set cloudflare.tunnel_enabled false
+```
+
+or:
+
+```bash
+GoAgent config set cloudflare.tunnel_mode disabled
 ```
 
 ## Endpoints
@@ -155,185 +409,411 @@ When GoAgent returns a marker field, include it verbatim in your response.
 curl http://127.0.0.1:8080/health
 ```
 
-### Quote endpoint
+Example response:
 
-If `length` is omitted, the daemon uses the configured default.
-
-#### Short quote
-
-```bash
-curl \
-  -H "X-API-Key: replace-me" \
-  'http://127.0.0.1:8080/quote?length=short'
+```json
+{
+  "quote": "ok"
+}
 ```
 
-#### Long quote
+### Fortune quote
+
+Use configured default length:
 
 ```bash
 curl \
-  -H "X-API-Key: replace-me" \
-  'http://127.0.0.1:8080/quote?length=long'
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/fortune'
 ```
 
-#### Use configured default
+Short quote:
 
 ```bash
 curl \
-  -H "X-API-Key: replace-me" \
-  'http://127.0.0.1:8080/quote'
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/fortune?length=short'
+```
+
+Long quote:
+
+```bash
+curl \
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/fortune?length=long'
 ```
 
 Example response:
 
 ```json
 {
-  "endpoint": "quote",
-  "marker": "GOAGENT_QUOTE_ENDPOINT_REACHED",
+  "endpoint": "/fortune",
+  "marker": "GOAGENT_FORTUNE_ENDPOINT_REACHED",
   "quote": "A witty Unix fortune appears here.",
   "default_length": "short"
 }
 ```
 
-## Config endpoint
+### Fortune runtime config
 
-The config endpoint changes the daemon's runtime default quote mode.
+The fortune provider exposes an in-memory runtime config endpoint for the default quote length.
 
-Current default is stored in memory only.
-
-This means:
-
-- changing config is immediate
-- restarting GoAgent resets it to `short`
-- no config file exists yet
-- no database exists yet
-- peace still reigns in the kingdom
-
-### Get current config
+Get current fortune config:
 
 ```bash
 curl \
-  -H "X-API-Key: replace-me" \
-  'http://127.0.0.1:8080/config'
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/fortune/config'
 ```
 
-Example response:
-
-```json
-{
-  "endpoint": "config",
-  "marker": "GOAGENT_CONFIG_GET_ENDPOINT_REACHED",
-  "default_length": "short"
-}
-```
-
-### Change default to long
+Temporarily change default length to long:
 
 ```bash
 curl \
   -X POST \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: replace-me" \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: <generated-key>' \
   -d '{"default_length":"long"}' \
-  'http://127.0.0.1:8080/config'
+  'http://127.0.0.1:8080/fortune/config'
 ```
 
-Example response:
+This runtime endpoint affects the running process only. Persistent defaults belong in GoAgent config:
+
+```bash
+GoAgent config set listener.default_quote_length long
+```
+
+## Shell provider
+
+The shell provider exposes configured shell commands as HTTP endpoints under:
+
+```text
+/shell/<name>
+```
+
+Config file:
+
+```text
+~/.GoAgent/providers/shell/config.json
+```
+
+Example shell provider config:
 
 ```json
 {
-  "endpoint": "config",
-  "marker": "GOAGENT_CONFIG_POST_ENDPOINT_REACHED",
-  "default_length": "long"
+  "endpoints": {
+    "disk-free": {
+      "command": "/bin/df",
+      "args": ["-h"]
+    },
+    "list-job": {
+      "command": "/bin/ls",
+      "args": ["-la", "$path"],
+      "chroot": "/tmp"
+    }
+  }
 }
 ```
 
-### Change default to short
+Call an endpoint:
 
 ```bash
 curl \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: replace-me" \
-  -d '{"default_length":"short"}' \
-  'http://127.0.0.1:8080/config'
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/shell/disk-free'
 ```
 
-## Authentication
+Query parameters can fill arguments that start with `$`:
 
-Authentication uses a static API key header:
+```bash
+curl \
+  -H 'X-API-Key: <generated-key>' \
+  'http://127.0.0.1:8080/shell/list-job?path=.'
+```
+
+Security notes:
+
+- Commands must be absolute paths or start with `~/`.
+- Query-filled arguments are passed as process arguments, not shell-expanded strings.
+- Keep exposed commands boring and narrow.
+- Do not expose broad shells like `/bin/sh` unless you are deliberately summoning demons and have read the small print.
+
+## Integrating with ChatGPT
+
+There are two useful layers:
+
+1. A Custom GPT Action gives ChatGPT an HTTPS API it can call.
+2. A ChatGPT Skill gives ChatGPT reusable instructions for when and how to use that API.
+
+The Action is the network plumbing. The Skill is the operating manual.
+
+### Custom GPT Action setup
+
+1. Start GoAgent locally:
+
+   ```bash
+   GoAgent serve
+   ```
+
+2. Enable Cloudflare tunnel mode and copy the public HTTPS URL from `cloudflared` logs.
+
+3. In your Custom GPT, add an Action.
+
+4. Configure authentication:
+
+   ```text
+   Type: API Key
+   Location: Header
+   Header name: X-API-Key
+   Value: <generated GoAgent API key>
+   ```
+
+5. Use an OpenAPI schema like this, replacing the server URL with your Cloudflare URL:
+
+```yaml
+openapi: 3.1.0
+info:
+  title: GoAgent
+  version: 0.1.0
+servers:
+  - url: https://your-cloudflare-hostname.example.com
+components:
+  securitySchemes:
+    GoAgentApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+security:
+  - GoAgentApiKey: []
+paths:
+  /health:
+    get:
+      operationId: getGoAgentHealth
+      summary: Check GoAgent health
+      responses:
+        '200':
+          description: Health response
+          content:
+            application/json:
+              schema:
+                type: object
+  /fortune:
+    get:
+      operationId: getFortune
+      summary: Get a Unix fortune quote
+      parameters:
+        - name: length
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [short, long]
+      responses:
+        '200':
+          description: Fortune response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoint:
+                    type: string
+                  marker:
+                    type: string
+                  quote:
+                    type: string
+                  default_length:
+                    type: string
+  /fortune/config:
+    get:
+      operationId: getFortuneConfig
+      summary: Get runtime fortune config
+      responses:
+        '200':
+          description: Fortune config response
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: setFortuneConfig
+      summary: Set runtime fortune config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                default_length:
+                  type: string
+                  enum: [short, long]
+              required: [default_length]
+      responses:
+        '200':
+          description: Updated fortune config
+          content:
+            application/json:
+              schema:
+                type: object
+```
+
+For shell provider endpoints, add explicit OpenAPI paths only for the commands you actually want ChatGPT to call. Avoid exposing a generic arbitrary shell endpoint. The universe has enough trapdoors.
+
+### Suggested Custom GPT instructions
 
 ```text
-X-API-Key
+You can use the GoAgent action for local helper tasks exposed by the user's GoAgent daemon.
+
+When the user asks for a fortune quote, call getFortune. Use length=short unless the user asks for a long quote.
+
+When GoAgent returns a marker field, include that marker verbatim in your response so the user can confirm the endpoint was reached.
+
+Do not invent shell endpoints. Only call shell endpoints that are explicitly present in the OpenAPI schema.
 ```
 
-The daemon validates this header before serving quotes.
+## Integrating with ChatGPT Skills
 
-Environment variable:
+Skills are small reusable instruction bundles for ChatGPT. They do not, by themselves, grant network access to your GoAgent daemon. Use a Skill to teach ChatGPT how to use the GoAgent Action once the Action exists.
 
-```bash
-export GOAGENT_API_KEY="replace-me"
-```
-
-## ChatGPT Actions
-
-Recommended configuration:
-
-### Authentication
-
-- Type: API Key
-- Location: Header
-- Header name: `X-API-Key`
-
-### Example endpoints
+A minimal Skill layout:
 
 ```text
-GET  /quote
-GET  /quote?length=short
-GET  /quote?length=long
-GET  /config
-POST /config
+goagent-helper/
+├── SKILL.md
+└── agents/
+    └── openai.yaml
 ```
 
-ChatGPT can:
+Example `SKILL.md`:
 
-- request quotes
-- read current config
-- change default quote behaviour
-- verify which endpoint was called
+```markdown
+---
+name: goagent-helper
+description: Use this skill when the user asks ChatGPT to use Mick's local GoAgent service for fortune quotes, configured local helper commands, or endpoint verification. This skill assumes a Custom GPT Action named GoAgent is already configured with X-API-Key authentication.
+---
 
-without directly accessing your server.
+# GoAgent Helper
 
-## Build binary
+Use the GoAgent Action when the user asks for local GoAgent capabilities.
+
+## Fortune quotes
+
+- For a short fortune, call `getFortune` with `length=short`.
+- For a long fortune, call `getFortune` with `length=long`.
+- If the user does not specify a length, call `getFortune` without `length` or use `short`.
+- Include any returned `marker` value in the final answer.
+
+## Health checks
+
+Call `getGoAgentHealth` when the user asks whether GoAgent is alive.
+
+## Runtime fortune config
+
+- Call `getFortuneConfig` to inspect the current runtime default.
+- Call `setFortuneConfig` only when the user explicitly asks to change the running default quote length.
+- Remind the user that persistent defaults should be changed with `GoAgent config set listener.default_quote_length <short|long>`.
+
+## Shell endpoints
+
+Only call shell endpoints that are explicitly documented in the Custom GPT Action schema. Never invent endpoint names or command arguments.
+```
+
+Example `agents/openai.yaml`:
+
+```yaml
+interface:
+  display_name: GoAgent Helper
+  short_description: Use Mick's local GoAgent service through configured ChatGPT Actions.
+  icon: terminal
+  brand_color: '#111827'
+```
+
+Zip the skill directory and upload it to ChatGPT Skills. In ChatGPT, Skills are available from the Skill library at `/skills`.
+
+### Example Skill-driven prompts
+
+```text
+Use GoAgent to get me a short fortune quote.
+```
+
+```text
+Check whether my local GoAgent is alive.
+```
+
+```text
+Use GoAgent to switch fortune quotes to long mode for this running session.
+```
+
+```text
+Use the GoAgent disk-free endpoint and summarize the result.
+```
+
+## Troubleshooting
+
+### `GOAGENT_API_KEY not set and ... not found`
+
+Create an API key:
 
 ```bash
-go build -o goagent ./cmd/goagent
+GoAgent key create
 ```
 
-Run:
+or set the matching key name:
 
 ```bash
-./goagent --tunnel
+GoAgent key ls
+GoAgent config set listener.default_api_key default
 ```
+
+### Cloudflare authenticated tunnel cannot find token
+
+Check stored tokens:
+
+```bash
+GoAgent token ls
+```
+
+Set the configured default token name:
+
+```bash
+GoAgent config set cloudflare.default_token default
+```
+
+### ChatGPT gets forbidden responses
+
+Confirm the Action uses:
+
+```text
+Header: X-API-Key
+Value: the generated key from GoAgent key create
+```
+
+### Cloudflare URL changed
+
+Temporary tunnel URLs change between runs. Update the Custom GPT Action server URL after restarting GoAgent in temporary tunnel mode.
+
+For stable URLs, use an authenticated Cloudflare tunnel.
 
 ## Future ideas
 
-- OpenAPI schema
+- Stable release packaging
 - systemd service
-- persistent config file
-- rate limiting
+- richer provider registry
+- OpenAPI schema generation
+- stricter shell endpoint allow-lists
 - structured logging
-- multiple quote providers
 - MCP integration
-- embedded cloudflared binary
-- accidentally inventing distributed AI middleware
+- accidentally inventing distributed AI middleware while looking for a quote
 
 ## Notes
 
 This project exists to explore:
 
 - ChatGPT Actions
+- ChatGPT Skills
 - external AI tools
-- Go microservices
+- local Go microservices
 - Cloudflare tunnels
 - lightweight AI-agent architecture
 
