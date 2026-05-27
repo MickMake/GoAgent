@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -15,6 +14,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
+	"sync"
 )
 
 type CloudflareConfig struct {
@@ -232,34 +233,54 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	}
 
 	cmd := exec.CommandContext(ctx, cloudflaredPath, args...)
-	pipeReader, pipeWriter := io.Pipe()
-	cmd.Stdout = pipeWriter
-	cmd.Stderr = pipeWriter
-	go relayCloudflaredOutput(pipeReader)
-
-	if err := cmd.Start(); err != nil {
-		_ = pipeWriter.Close()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
 		return nil, err
 	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	urlOnce := &sync.Once{}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	go relayCloudflaredOutput(stdout, os.Stdout, urlOnce)
+	go relayCloudflaredOutput(stderr, os.Stderr, urlOnce)
 	go func() {
-		_ = cmd.Wait()
-		_ = pipeWriter.Close()
+		if err := cmd.Wait(); err != nil {
+			log.Printf("cloudflared exited: %v", err)
+		}
 	}()
 	log.Printf("cloudflared started with pid %d", cmd.Process.Pid)
 	return cmd, nil
 }
 
-func relayCloudflaredOutput(reader io.Reader) {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fmt.Fprintln(os.Stderr, line)
-		if url := cloudflareTunnelURLPattern.FindString(line); url != "" {
-			log.Printf("Cloudflare tunnel URL: %s", url)
+func relayCloudflaredOutput(reader io.Reader, writer io.Writer, urlOnce *sync.Once) {
+	buffer := make([]byte, 1024)
+	seen := ""
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			chunk := string(buffer[:n])
+			_, _ = writer.Write(buffer[:n])
+			seen += chunk
+			if len(seen) > 8192 {
+				seen = seen[len(seen)-8192:]
+			}
+			if url := cloudflareTunnelURLPattern.FindString(seen); url != "" {
+				urlOnce.Do(func() {
+					log.Printf("Cloudflare tunnel URL: %s", strings.TrimSpace(url))
+				})
+			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("cloudflared output read error: %v", err)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				log.Printf("cloudflared output read error: %v", err)
+			}
+			return
+		}
 	}
 }
 
