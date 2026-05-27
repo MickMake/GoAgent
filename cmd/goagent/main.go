@@ -32,16 +32,28 @@ const (
 )
 
 type AppConfig struct {
-	ListenAddr             string `json:"listen_addr"`
+	Global     GlobalConfig     `json:"global"`
+	Listener   ListenerConfig   `json:"listener"`
+	Cloudflare CloudflareConfig `json:"cloudflare"`
+}
+
+type GlobalConfig struct {
 	CacheDir               string `json:"cache_dir"`
 	KeyDir                 string `json:"key_dir"`
-	DefaultAPIKey          string `json:"default_api_key"`
-	DefaultToken           string `json:"default_token"`
-	TunnelEnabled          bool   `json:"tunnel_enabled"`
-	TunnelMode             string `json:"tunnel_mode"`
-	DefaultQuoteLength     string `json:"default_quote_length"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds"`
-	CloudflaredLogLevel    string `json:"cloudflared_log_level"`
+}
+
+type ListenerConfig struct {
+	ListenAddr         string `json:"listen_addr"`
+	DefaultAPIKey      string `json:"default_api_key"`
+	DefaultQuoteLength string `json:"default_quote_length"`
+}
+
+type CloudflareConfig struct {
+	DefaultToken        string `json:"default_token"`
+	TunnelEnabled       bool   `json:"tunnel_enabled"`
+	TunnelMode          string `json:"tunnel_mode"`
+	CloudflaredLogLevel string `json:"cloudflared_log_level"`
 }
 
 type Response struct {
@@ -88,19 +100,19 @@ func main() {
 	}
 
 	tunnelFlag := flag.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
-	listenFlag := flag.String("listen", cfg.ListenAddr, "HTTP listen address")
+	listenFlag := flag.String("listen", cfg.Listener.ListenAddr, "HTTP listen address")
 	flag.Parse()
 
-	cfg.ListenAddr = *listenFlag
-	setDefaultLength(cfg.DefaultQuoteLength)
+	cfg.Listener.ListenAddr = *listenFlag
+	setDefaultLength(cfg.Listener.DefaultQuoteLength)
 
 	apiKey, err := loadAPIKey(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	tunnelRequested := *tunnelFlag || cfg.TunnelEnabled
-	if cfg.TunnelMode == "disabled" {
+	tunnelRequested := *tunnelFlag || cfg.Cloudflare.TunnelEnabled
+	if cfg.Cloudflare.TunnelMode == "disabled" {
 		tunnelRequested = false
 	}
 
@@ -118,7 +130,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	mux.HandleFunc("/quote", requireAPIKey(apiKey, quote))
 	mux.HandleFunc("/config", requireAPIKey(apiKey, configEndpoint))
 
-	server := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
+	server := &http.Server{Addr: cfg.Listener.ListenAddr, Handler: mux}
 
 	var tunnelCmd *exec.Cmd
 	if tunnel {
@@ -131,7 +143,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("GoAgent listening on %s", cfg.ListenAddr)
+		log.Printf("GoAgent listening on %s", cfg.Listener.ListenAddr)
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
@@ -150,7 +162,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 		return nil
 	}
 
-	shutdownTimeout := time.Duration(cfg.ShutdownTimeoutSeconds) * time.Second
+	shutdownTimeout := time.Duration(cfg.Global.ShutdownTimeoutSeconds) * time.Second
 	if shutdownTimeout <= 0 {
 		shutdownTimeout = 5 * time.Second
 	}
@@ -273,16 +285,22 @@ func writeJSON(w http.ResponseWriter, status int, payload Response) {
 func defaultConfig() AppConfig {
 	base := mustGoAgentDir()
 	return AppConfig{
-		ListenAddr:             "127.0.0.1:8080",
-		CacheDir:               filepath.Join(base, "cache"),
-		KeyDir:                 filepath.Join(base, "keys"),
-		DefaultAPIKey:          "default",
-		DefaultToken:           "default",
-		TunnelEnabled:          false,
-		TunnelMode:             "auto",
-		DefaultQuoteLength:     "short",
-		ShutdownTimeoutSeconds: 5,
-		CloudflaredLogLevel:    "info",
+		Global: GlobalConfig{
+			CacheDir:               filepath.Join(base, "cache"),
+			KeyDir:                 filepath.Join(base, "keys"),
+			ShutdownTimeoutSeconds: 5,
+		},
+		Listener: ListenerConfig{
+			ListenAddr:         "127.0.0.1:8080",
+			DefaultAPIKey:      "default",
+			DefaultQuoteLength: "short",
+		},
+		Cloudflare: CloudflareConfig{
+			DefaultToken:        "default",
+			TunnelEnabled:       false,
+			TunnelMode:          "auto",
+			CloudflaredLogLevel: "info",
+		},
 	}
 }
 
@@ -308,35 +326,35 @@ func loadConfig() (AppConfig, error) {
 
 func normalizeConfig(cfg AppConfig) AppConfig {
 	defaults := defaultConfig()
-	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = defaults.ListenAddr
+	if cfg.Global.CacheDir == "" {
+		cfg.Global.CacheDir = defaults.Global.CacheDir
 	}
-	if cfg.CacheDir == "" {
-		cfg.CacheDir = defaults.CacheDir
+	if cfg.Global.KeyDir == "" {
+		cfg.Global.KeyDir = defaults.Global.KeyDir
 	}
-	if cfg.KeyDir == "" {
-		cfg.KeyDir = defaults.KeyDir
+	if cfg.Global.ShutdownTimeoutSeconds <= 0 {
+		cfg.Global.ShutdownTimeoutSeconds = defaults.Global.ShutdownTimeoutSeconds
 	}
-	if cfg.DefaultAPIKey == "" {
-		cfg.DefaultAPIKey = defaults.DefaultAPIKey
+	if cfg.Listener.ListenAddr == "" {
+		cfg.Listener.ListenAddr = defaults.Listener.ListenAddr
 	}
-	if cfg.DefaultToken == "" {
-		cfg.DefaultToken = defaults.DefaultToken
+	if cfg.Listener.DefaultAPIKey == "" {
+		cfg.Listener.DefaultAPIKey = defaults.Listener.DefaultAPIKey
 	}
-	if cfg.TunnelMode == "" {
-		cfg.TunnelMode = defaults.TunnelMode
+	if cfg.Listener.DefaultQuoteLength == "" {
+		cfg.Listener.DefaultQuoteLength = defaults.Listener.DefaultQuoteLength
 	}
-	if cfg.DefaultQuoteLength == "" {
-		cfg.DefaultQuoteLength = defaults.DefaultQuoteLength
+	if cfg.Cloudflare.DefaultToken == "" {
+		cfg.Cloudflare.DefaultToken = defaults.Cloudflare.DefaultToken
 	}
-	if cfg.ShutdownTimeoutSeconds <= 0 {
-		cfg.ShutdownTimeoutSeconds = defaults.ShutdownTimeoutSeconds
+	if cfg.Cloudflare.TunnelMode == "" {
+		cfg.Cloudflare.TunnelMode = defaults.Cloudflare.TunnelMode
 	}
-	if cfg.CloudflaredLogLevel == "" {
-		cfg.CloudflaredLogLevel = defaults.CloudflaredLogLevel
+	if cfg.Cloudflare.CloudflaredLogLevel == "" {
+		cfg.Cloudflare.CloudflaredLogLevel = defaults.Cloudflare.CloudflaredLogLevel
 	}
-	cfg.CacheDir = expandPath(cfg.CacheDir)
-	cfg.KeyDir = expandPath(cfg.KeyDir)
+	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
+	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
 	return cfg
 }
 
@@ -358,7 +376,7 @@ func saveConfig(cfg AppConfig) error {
 
 func runConfigCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent config show | GoAgent config set <key> <value> | GoAgent config reset")
+		return errors.New("usage: GoAgent config show | GoAgent config set <section.key> <value> | GoAgent config reset")
 	}
 	switch args[0] {
 	case "show":
@@ -370,7 +388,7 @@ func runConfigCommand(cfg AppConfig, args []string) error {
 		return nil
 	case "set":
 		if len(args) != 3 {
-			return errors.New("usage: GoAgent config set <key> <value>")
+			return errors.New("usage: GoAgent config set <section.key> <value>")
 		}
 		updated, err := setConfigValue(cfg, args[1], args[2])
 		if err != nil {
@@ -393,59 +411,73 @@ func runConfigCommand(cfg AppConfig, args []string) error {
 }
 
 func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
+	key = normalizeConfigKey(key)
 	switch key {
-	case "listen_addr":
-		cfg.ListenAddr = value
-	case "cache_dir":
-		cfg.CacheDir = expandPath(value)
-	case "key_dir":
-		cfg.KeyDir = expandPath(value)
-	case "default_api_key":
-		cfg.DefaultAPIKey = value
-	case "default_token":
-		cfg.DefaultToken = value
-	case "tunnel_enabled":
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.TunnelEnabled = parsed
-	case "tunnel_mode":
-		if value != "auto" && value != "temporary" && value != "authenticated" && value != "disabled" {
-			return cfg, errors.New("tunnel_mode must be auto, temporary, authenticated, or disabled")
-		}
-		cfg.TunnelMode = value
-	case "default_quote_length":
-		if fortuneArgs(value) == nil {
-			return cfg, errors.New("default_quote_length must be short or long")
-		}
-		cfg.DefaultQuoteLength = value
-	case "shutdown_timeout_seconds":
+	case "global.cache_dir":
+		cfg.Global.CacheDir = expandPath(value)
+	case "global.key_dir":
+		cfg.Global.KeyDir = expandPath(value)
+	case "global.shutdown_timeout_seconds":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
 			return cfg, err
 		}
 		if parsed <= 0 {
-			return cfg, errors.New("shutdown_timeout_seconds must be greater than zero")
+			return cfg, errors.New("global.shutdown_timeout_seconds must be greater than zero")
 		}
-		cfg.ShutdownTimeoutSeconds = parsed
-	case "cloudflared_log_level":
-		cfg.CloudflaredLogLevel = value
+		cfg.Global.ShutdownTimeoutSeconds = parsed
+	case "listener.listen_addr":
+		cfg.Listener.ListenAddr = value
+	case "listener.default_api_key":
+		cfg.Listener.DefaultAPIKey = value
+	case "listener.default_quote_length":
+		if fortuneArgs(value) == nil {
+			return cfg, errors.New("listener.default_quote_length must be short or long")
+		}
+		cfg.Listener.DefaultQuoteLength = value
+	case "cloudflare.default_token":
+		cfg.Cloudflare.DefaultToken = value
+	case "cloudflare.tunnel_enabled":
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Cloudflare.TunnelEnabled = parsed
+	case "cloudflare.tunnel_mode":
+		if value != "auto" && value != "temporary" && value != "authenticated" && value != "disabled" {
+			return cfg, errors.New("cloudflare.tunnel_mode must be auto, temporary, authenticated, or disabled")
+		}
+		cfg.Cloudflare.TunnelMode = value
+	case "cloudflare.cloudflared_log_level":
+		cfg.Cloudflare.CloudflaredLogLevel = value
 	default:
 		return cfg, fmt.Errorf("unknown config key %q", key)
 	}
 	return normalizeConfig(cfg), nil
 }
 
+func normalizeConfigKey(key string) string {
+	switch key {
+	case "cache_dir", "key_dir", "shutdown_timeout_seconds":
+		return "global." + key
+	case "listen_addr", "default_api_key", "default_quote_length":
+		return "listener." + key
+	case "default_token", "tunnel_enabled", "tunnel_mode", "cloudflared_log_level":
+		return "cloudflare." + key
+	default:
+		return key
+	}
+}
+
 func loadAPIKey(cfg AppConfig) (string, error) {
 	if envKey := strings.TrimSpace(os.Getenv("GOAGENT_API_KEY")); envKey != "" {
 		return envKey, nil
 	}
-	key, err := readNamedSecret(goagentAPIKeyPath(cfg, cfg.DefaultAPIKey))
+	key, err := readNamedSecret(goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
 	if err == nil && key != "" {
 		return key, nil
 	}
-	return "", fmt.Errorf("GOAGENT_API_KEY not set and %s not found; run: GoAgent key create", goagentAPIKeyPath(cfg, cfg.DefaultAPIKey))
+	return "", fmt.Errorf("GOAGENT_API_KEY not set and %s not found; run: GoAgent key create", goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
 }
 
 func runAPIKeyCommand(cfg AppConfig, args []string) error {
@@ -507,33 +539,33 @@ func startCloudflareTunnel(ctx context.Context, cfg AppConfig) (*exec.Cmd, error
 	}
 
 	args := []string{"tunnel"}
-	if cfg.CloudflaredLogLevel != "" {
-		args = append(args, "--loglevel", cfg.CloudflaredLogLevel)
+	if cfg.Cloudflare.CloudflaredLogLevel != "" {
+		args = append(args, "--loglevel", cfg.Cloudflare.CloudflaredLogLevel)
 	}
 
-	token, tokenErr := readNamedSecret(cloudflareTokenPath(cfg, cfg.DefaultToken))
+	token, tokenErr := readNamedSecret(cloudflareTokenPath(cfg, cfg.Cloudflare.DefaultToken))
 	useToken := false
-	switch cfg.TunnelMode {
+	switch cfg.Cloudflare.TunnelMode {
 	case "auto":
 		useToken = tokenErr == nil && token != ""
 	case "authenticated":
 		if tokenErr != nil || token == "" {
-			return nil, fmt.Errorf("authenticated tunnel requested but token %q was not found", cfg.DefaultToken)
+			return nil, fmt.Errorf("authenticated tunnel requested but token %q was not found", cfg.Cloudflare.DefaultToken)
 		}
 		useToken = true
 	case "temporary":
 		useToken = false
 	case "disabled":
-		return nil, errors.New("tunnel_mode is disabled")
+		return nil, errors.New("cloudflare.tunnel_mode is disabled")
 	default:
-		return nil, fmt.Errorf("invalid tunnel_mode %q", cfg.TunnelMode)
+		return nil, fmt.Errorf("invalid cloudflare.tunnel_mode %q", cfg.Cloudflare.TunnelMode)
 	}
 
 	if useToken {
 		args = append(args, "run", "--token", token)
-		log.Printf("starting authenticated Cloudflare tunnel using token %q", cfg.DefaultToken)
+		log.Printf("starting authenticated Cloudflare tunnel using token %q", cfg.Cloudflare.DefaultToken)
 	} else {
-		args = append(args, "--url", "http://"+cfg.ListenAddr)
+		args = append(args, "--url", "http://"+cfg.Listener.ListenAddr)
 		log.Println("starting temporary Cloudflare tunnel")
 	}
 
@@ -585,7 +617,7 @@ func createProvidedSecret(kind string, pathFunc func(string) string, name string
 }
 
 func listSecrets(cfg AppConfig, prefix, suffix string) error {
-	entries, err := os.ReadDir(cfg.KeyDir)
+	entries, err := os.ReadDir(cfg.Global.KeyDir)
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Println("no credentials found")
 		return nil
@@ -661,15 +693,15 @@ func cleanSecretName(name string) (string, error) {
 }
 
 func goagentAPIKeyPath(cfg AppConfig, name string) string {
-	return filepath.Join(cfg.KeyDir, "GoAgent-"+name+".key")
+	return filepath.Join(cfg.Global.KeyDir, "GoAgent-"+name+".key")
 }
 
 func cloudflareTokenPath(cfg AppConfig, name string) string {
-	return filepath.Join(cfg.KeyDir, "token-"+name+".token")
+	return filepath.Join(cfg.Global.KeyDir, "token-"+name+".token")
 }
 
 func ensureCloudflared(cfg AppConfig) (string, error) {
-	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Global.CacheDir, 0o755); err != nil {
 		return "", err
 	}
 
@@ -681,7 +713,7 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
 	}
-	destination := filepath.Join(cfg.CacheDir, exeName)
+	destination := filepath.Join(cfg.Global.CacheDir, exeName)
 	if fileExists(destination) {
 		log.Printf("using cached cloudflared: %s", destination)
 		return destination, nil
