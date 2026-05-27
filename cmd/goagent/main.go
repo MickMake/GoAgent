@@ -233,13 +233,22 @@ func ensureCloudflared() (string, error) {
 	return destination, nil
 }
 
-func goagentCacheDir() (string, error) {
-	base, err := os.UserCacheDir()
+func goagentDir() (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(base, "goagent"), nil
+	return filepath.Join(home, ".GoAgent"), nil
+}
+
+func goagentCacheDir() (string, error) {
+	base, err := goagentDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(base, "cache"), nil
 }
 
 func cloudflaredAssetName(goos, goarch string) (string, bool, error) {
