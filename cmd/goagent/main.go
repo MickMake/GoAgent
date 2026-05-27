@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/MickMake/GoAgent/providers/fortune"
@@ -27,35 +28,84 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "key":
-			if err := runAPIKeyCommand(cfg, os.Args[2:]); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "token":
-			if err := runTokenCommand(cfg, os.Args[2:]); err != nil {
-				log.Fatal(err)
-			}
-			return
-		case "config":
-			if err := runConfigCommand(cfg, os.Args[2:]); err != nil {
+	if len(os.Args) == 1 {
+		printHelp()
+		return
+	}
+
+	command := os.Args[1]
+	switch command {
+	case "help", "-h", "--help":
+		printHelp()
+		return
+	case "serve":
+		if err := runServeCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "key":
+		if err := runAPIKeyCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "token":
+		if err := runTokenCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "config":
+		if err := runConfigCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	default:
+		if strings.HasPrefix(command, "-") {
+			if err := runServeCommand(cfg, os.Args[1:]); err != nil {
 				log.Fatal(err)
 			}
 			return
 		}
+		printHelp()
+		log.Fatalf("unknown command %q", command)
 	}
+}
 
-	tunnelFlag := flag.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
-	listenFlag := flag.String("listen", cfg.Listener.ListenAddr, "HTTP listen address")
-	flag.Parse()
+func printHelp() {
+	fmt.Fprintln(os.Stdout, `GoAgent - minimal local ChatGPT-style agent
+
+Usage:
+  GoAgent help
+  GoAgent serve [--listen <addr>] [--tunnel]
+  GoAgent key create [name]
+  GoAgent key ls
+  GoAgent key rm <name>
+  GoAgent token add [name] <token>
+  GoAgent token ls
+  GoAgent token rm <name>
+  GoAgent config show
+  GoAgent config set <section.key> <value>
+  GoAgent config reset
+
+Examples:
+  GoAgent serve
+  GoAgent serve --listen 127.0.0.1:8080
+  GoAgent key create
+  GoAgent config show`)
+}
+
+func runServeCommand(cfg AppConfig, args []string) error {
+	serveFlags := flag.NewFlagSet("serve", flag.ExitOnError)
+	tunnelFlag := serveFlags.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
+	listenFlag := serveFlags.String("listen", cfg.Listener.ListenAddr, "HTTP listen address")
+	if err := serveFlags.Parse(args); err != nil {
+		return err
+	}
 
 	cfg.Listener.ListenAddr = *listenFlag
 
 	apiKey, err := loadAPIKey(cfg)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	tunnelRequested := *tunnelFlag || cfg.Cloudflare.TunnelEnabled
@@ -63,9 +113,7 @@ func main() {
 		tunnelRequested = false
 	}
 
-	if err := runDaemon(cfg, apiKey, tunnelRequested); err != nil {
-		log.Fatal(err)
-	}
+	return runDaemon(cfg, apiKey, tunnelRequested)
 }
 
 func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
