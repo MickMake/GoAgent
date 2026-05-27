@@ -3,6 +3,8 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -42,12 +45,19 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "key" {
+		if err := runKeyCommand(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	tunnel := flag.Bool("tunnel", false, "auto-download and run cloudflared tunnel")
 	flag.Parse()
 
-	apiKey := os.Getenv("GOAGENT_API_KEY")
-	if apiKey == "" {
-		log.Fatal("GOAGENT_API_KEY not set")
+	apiKey, err := loadAPIKey()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	http.HandleFunc("/health", health)
@@ -131,7 +141,6 @@ func fortuneArgs(length string) []string {
 	case "short":
 		return []string{"-s"}
 	case "long":
-		// normal fortune output
 		return []string{}
 	default:
 		return nil
@@ -165,6 +174,171 @@ func writeJSON(w http.ResponseWriter, status int, payload Response) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(payload)
+}
+
+func loadAPIKey() (string, error) {
+	if envKey := strings.TrimSpace(os.Getenv("GOAGENT_API_KEY")); envKey != "" {
+		return envKey, nil
+	}
+
+	key, err := readKey("default")
+	if err == nil && key != "" {
+		return key, nil
+	}
+
+	return "", errors.New("GOAGENT_API_KEY not set and ~/.GoAgent/keys/default.key not found; run: goagent key create")
+}
+
+func runKeyCommand(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: goagent key create [name] | goagent key ls | goagent key rm <name>")
+	}
+
+	switch args[0] {
+	case "create":
+		name := "default"
+		if len(args) > 1 {
+			name = args[1]
+		}
+		return createKey(name)
+	case "ls":
+		return listKeys()
+	case "rm":
+		if len(args) < 2 {
+			return errors.New("usage: goagent key rm <name>")
+		}
+		return removeKey(args[1])
+	default:
+		return fmt.Errorf("unknown key command %q", args[0])
+	}
+}
+
+func createKey(name string) error {
+	name, err := cleanKeyName(name)
+	if err != nil {
+		return err
+	}
+
+	key, err := generateAPIKey()
+	if err != nil {
+		return err
+	}
+
+	keysDir, err := goagentKeysDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(keysDir, 0o700); err != nil {
+		return err
+	}
+
+	path := keyPath(name)
+	if fileExists(path) {
+		return fmt.Errorf("key %q already exists: %s", name, path)
+	}
+
+	if err := os.WriteFile(path, []byte(key+"\n"), 0o600); err != nil {
+		return err
+	}
+
+	fmt.Printf("created key %q: %s\n", name, path)
+	fmt.Printf("X-API-Key: %s\n", key)
+	return nil
+}
+
+func listKeys() error {
+	keysDir, err := goagentKeysDir()
+	if err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(keysDir)
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("no keys found")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	keys := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".key") {
+			keys = append(keys, strings.TrimSuffix(name, ".key"))
+		}
+	}
+
+	if len(keys) == 0 {
+		fmt.Println("no keys found")
+		return nil
+	}
+
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Println(key)
+	}
+	return nil
+}
+
+func removeKey(name string) error {
+	name, err := cleanKeyName(name)
+	if err != nil {
+		return err
+	}
+
+	path := keyPath(name)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("key %q does not exist", name)
+		}
+		return err
+	}
+
+	fmt.Printf("removed key %q\n", name)
+	return nil
+}
+
+func readKey(name string) (string, error) {
+	path := keyPath(name)
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(contents)), nil
+}
+
+func generateAPIKey() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func cleanKeyName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("key name cannot be empty")
+	}
+	if name != filepath.Base(name) {
+		return "", errors.New("key name must not contain path separators")
+	}
+	if strings.Contains(name, "..") {
+		return "", errors.New("key name must not contain '..'")
+	}
+	return name, nil
+}
+
+func keyPath(name string) string {
+	keysDir, err := goagentKeysDir()
+	if err != nil {
+		return filepath.Join(".", name+".key")
+	}
+	return filepath.Join(keysDir, name+".key")
 }
 
 func startCloudflareTunnel(url string) error {
@@ -249,6 +423,15 @@ func goagentCacheDir() (string, error) {
 	}
 
 	return filepath.Join(base, "cache"), nil
+}
+
+func goagentKeysDir() (string, error) {
+	base, err := goagentDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(base, "keys"), nil
 }
 
 func cloudflaredAssetName(goos, goarch string) (string, bool, error) {
