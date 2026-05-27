@@ -10,7 +10,15 @@ import (
 	"sync"
 )
 
+const (
+	markerQuoteEndpoint     = "GOAGENT_QUOTE_ENDPOINT_REACHED"
+	markerConfigGetEndpoint = "GOAGENT_CONFIG_GET_ENDPOINT_REACHED"
+	markerConfigPostEndpoint = "GOAGENT_CONFIG_POST_ENDPOINT_REACHED"
+)
+
 type Response struct {
+	Endpoint      string `json:"endpoint,omitempty"`
+	Marker        string `json:"marker,omitempty"`
 	Quote         string `json:"quote,omitempty"`
 	DefaultLength string `json:"default_length,omitempty"`
 	Error         string `json:"error,omitempty"`
@@ -62,6 +70,8 @@ func quote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, Response{
+		Endpoint:      "quote",
+		Marker:        markerQuoteEndpoint,
 		Quote:         strings.TrimSpace(string(out)),
 		DefaultLength: getDefaultLength(),
 	})
@@ -70,7 +80,11 @@ func quote(w http.ResponseWriter, r *http.Request) {
 func config(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, 200, Response{DefaultLength: getDefaultLength()})
+		writeJSON(w, 200, Response{
+			Endpoint:      "config",
+			Marker:        markerConfigGetEndpoint,
+			DefaultLength: getDefaultLength(),
+		})
 	case http.MethodPost:
 		var req ConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -84,7 +98,11 @@ func config(w http.ResponseWriter, r *http.Request) {
 		}
 
 		setDefaultLength(req.DefaultLength)
-		writeJSON(w, 200, Response{DefaultLength: getDefaultLength()})
+		writeJSON(w, 200, Response{
+			Endpoint:      "config",
+			Marker:        markerConfigPostEndpoint,
+			DefaultLength: getDefaultLength(),
+		})
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
