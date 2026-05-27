@@ -8,6 +8,8 @@ Built from a tractor in a field, which feels important architecturally.
 
 - Unix `fortune` integration
 - API key authentication
+- Runtime config endpoint
+- Configurable default quote mode
 - Local-only listener
 - Designed for Cloudflare Tunnel exposure
 - Tiny and gloriously boring
@@ -62,7 +64,11 @@ GoAgent listening on :8080
 curl http://127.0.0.1:8080/health
 ```
 
-### Short quote
+### Quote endpoint
+
+If `length` is omitted, the daemon uses the configured default.
+
+#### Short quote
 
 ```bash
 curl \
@@ -70,12 +76,81 @@ curl \
   'http://127.0.0.1:8080/quote?length=short'
 ```
 
-### Long quote
+#### Long quote
 
 ```bash
 curl \
   -H "X-API-Key: replace-me" \
   'http://127.0.0.1:8080/quote?length=long'
+```
+
+#### Use configured default
+
+```bash
+curl \
+  -H "X-API-Key: replace-me" \
+  'http://127.0.0.1:8080/quote'
+```
+
+Example response:
+
+```json
+{
+  "quote": "A witty Unix fortune appears here.",
+  "default_length": "short"
+}
+```
+
+## Config endpoint
+
+The config endpoint changes the daemon's runtime default quote mode.
+
+Current default is stored in memory only.
+
+This means:
+
+- changing config is immediate
+- restarting GoAgent resets it to `short`
+- no config file exists yet
+- no database exists yet
+- peace still reigns in the kingdom
+
+### Get current config
+
+```bash
+curl \
+  -H "X-API-Key: replace-me" \
+  'http://127.0.0.1:8080/config'
+```
+
+Example response:
+
+```json
+{
+  "default_length": "short"
+}
+```
+
+### Change default to long
+
+```bash
+curl \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: replace-me" \
+  -d '{"default_length":"long"}' \
+  'http://127.0.0.1:8080/config'
+```
+
+### Change default to short
+
+```bash
+curl \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: replace-me" \
+  -d '{"default_length":"short"}' \
+  'http://127.0.0.1:8080/config'
 ```
 
 ## Authentication
@@ -127,11 +202,23 @@ Recommended configuration:
 - Location: Header
 - Header name: `X-API-Key`
 
-### Example endpoint
+### Example endpoints
 
 ```text
-GET /quote?length=short
+GET  /quote
+GET  /quote?length=short
+GET  /quote?length=long
+GET  /config
+POST /config
 ```
+
+ChatGPT can:
+
+- request quotes
+- read current config
+- change default quote behaviour
+
+without directly accessing your server.
 
 ## Build binary
 
@@ -149,6 +236,7 @@ Run:
 
 - OpenAPI schema
 - systemd service
+- persistent config file
 - rate limiting
 - structured logging
 - multiple quote providers
