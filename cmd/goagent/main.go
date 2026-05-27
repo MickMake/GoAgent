@@ -120,16 +120,6 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	}
 
 	server := &http.Server{Addr: cfg.Listener.ListenAddr, Handler: mux}
-
-	var tunnelCmd *exec.Cmd
-	if tunnel {
-		cmd, err := startCloudflareTunnel(ctx, cfg)
-		if err != nil {
-			return fmt.Errorf("cloudflared tunnel failed: %w", err)
-		}
-		tunnelCmd = cmd
-	}
-
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("GoAgent listening on %s", cfg.Listener.ListenAddr)
@@ -141,6 +131,16 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 		serverErr <- nil
 	}()
 
+	var tunnelCmd *exec.Cmd
+	if tunnel {
+		cmd, err := startCloudflareTunnel(ctx, cfg)
+		if err != nil {
+			shutdownServer(server, cfg)
+			return fmt.Errorf("cloudflared tunnel failed: %w", err)
+		}
+		tunnelCmd = cmd
+	}
+
 	select {
 	case <-ctx.Done():
 		log.Println("shutdown requested")
@@ -151,6 +151,21 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 		return nil
 	}
 
+	shutdownServer(server, cfg)
+
+	if tunnelCmd != nil && tunnelCmd.Process != nil {
+		if err := tunnelCmd.Process.Kill(); err != nil {
+			log.Printf("cloudflared kill error: %v", err)
+		} else {
+			log.Println("cloudflared stopped")
+		}
+		_ = tunnelCmd.Wait()
+	}
+
+	return nil
+}
+
+func shutdownServer(server *http.Server, cfg AppConfig) {
 	shutdownTimeout := time.Duration(cfg.Global.ShutdownTimeoutSeconds) * time.Second
 	if shutdownTimeout <= 0 {
 		shutdownTimeout = 5 * time.Second
@@ -164,17 +179,6 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	} else {
 		log.Println("HTTP server stopped")
 	}
-
-	if tunnelCmd != nil && tunnelCmd.Process != nil {
-		if err := tunnelCmd.Process.Kill(); err != nil {
-			log.Printf("cloudflared kill error: %v", err)
-		} else {
-			log.Println("cloudflared stopped")
-		}
-		_ = tunnelCmd.Wait()
-	}
-
-	return nil
 }
 
 func health(w http.ResponseWriter, r *http.Request) {
