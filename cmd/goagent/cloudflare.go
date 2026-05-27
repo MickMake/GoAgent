@@ -42,6 +42,7 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		exeName += ".exe"
 	}
 	destination := filepath.Join(cfg.Global.CacheDir, exeName)
+	fmt.Println(destination)
 	if fileExists(destination) {
 		if err := validateCloudflared(destination); err == nil {
 			log.Printf("using cached cloudflared: %s", destination)
