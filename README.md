@@ -13,6 +13,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Persistent config under `~/.GoAgent/`
 - Stored API keys and Cloudflare tunnel tokens
 - Auto-download and cache of `cloudflared`
+- Explicit `cloudflared` cache update command
 - Fortune provider: `/fortune`
 - Configurable shell provider: `/shell/<name>`
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
@@ -136,6 +137,7 @@ GoAgent key rm <name>
 GoAgent token add [name] <token>
 GoAgent token ls
 GoAgent token rm <name>
+GoAgent cloudflared update
 GoAgent config show
 GoAgent config set <section.key> <value>
 GoAgent config reset
@@ -144,6 +146,8 @@ GoAgent config reset
 `GoAgent` with no arguments prints help.
 
 `GoAgent serve` starts the daemon. Runtime options such as listen address and Cloudflare tunnel behaviour are read from config only.
+
+`GoAgent cloudflared update` forces a fresh `cloudflared` download into the cache and validates it before use. This is the deliberate-update lever; otherwise GoAgent reuses a valid cached binary.
 
 ## GPT setup
 
@@ -261,7 +265,10 @@ GoAgent config set cloudflare.enabled true
 GoAgent config set cloudflare.mode auto
 GoAgent config set cloudflare.default_token default
 GoAgent config set cloudflare.log_level info
+GoAgent config set cloudflare.version latest
 ```
+
+`cloudflare.version` can be `latest` or a Cloudflare release tag such as `2025.6.0`. When set to a specific release, GoAgent downloads that release and checks that `cloudflared --version` matches the configured value. On macOS Catalina, the default `latest` behaviour is pinned internally to `2025.6.0` for compatibility.
 
 Cloudflare modes:
 
@@ -270,6 +277,12 @@ auto           Use a saved token if available; otherwise create a temporary tunn
 temporary      Always create a temporary trycloudflare tunnel.
 authenticated  Require a saved Cloudflare tunnel token and run that named tunnel.
 disabled       Do not start Cloudflare Tunnel.
+```
+
+Refresh the cached `cloudflared` binary:
+
+```bash
+GoAgent cloudflared update
 ```
 
 Set GPT setup URLs:
@@ -319,7 +332,8 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "default_token": "default",
     "enabled": false,
     "mode": "auto",
-    "log_level": "info"
+    "log_level": "info",
+    "version": "latest"
   },
   "gpt": {
     "server_url": "https://example.trycloudflare.com",
