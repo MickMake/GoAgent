@@ -116,6 +116,12 @@ Typical layout:
         └── config.json
 ```
 
+## Providers
+
+Provider-specific documentation:
+
+- [Shell provider](providers/shell/README.md): configure `/shell/<name>` endpoints, metadata for `GoAgent setup`, query parameters, and chroot examples.
+
 ## CLI commands
 
 ```text
@@ -190,6 +196,7 @@ This endpoint does not require an API key so ChatGPT can load the schema while c
 The schema includes:
 
 - `/health`
+- `/version`
 - `/fortune`
 - `/fortune/config`
 - any configured `/shell/<name>` endpoints from `~/.GoAgent/providers/shell/config.json`
