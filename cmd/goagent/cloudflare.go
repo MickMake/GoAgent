@@ -24,14 +24,30 @@ type CloudflareConfig struct {
 	Enabled      bool   `json:"enabled"`
 	Mode         string `json:"mode"`
 	LogLevel     string `json:"log_level"`
+	Version      string `json:"version"`
 }
 
-const cloudflaredCatalinaVersion = "2025.6.0"
+const (
+	cloudflaredDefaultVersion   = "latest"
+	cloudflaredCatalinaVersion  = "2025.6.0"
+	maxCloudflaredDownloadBytes = 128 * 1024 * 1024
+)
 
-var cloudflareTunnelURLPattern = regexp.MustCompile(`https://[-a-zA-Z0-9]+\.trycloudflare\.com`)
+var (
+	cloudflareTunnelURLPattern = regexp.MustCompile(`https://[-a-zA-Z0-9]+\.trycloudflare\.com`)
+	cloudflaredHTTPClient      = &http.Client{Timeout: 2 * time.Minute}
+)
 
 func ensureCloudflared(cfg AppConfig) (string, error) {
-	if err := os.MkdirAll(cfg.Global.CacheDir, 0o755); err != nil {
+	return installCloudflared(cfg, false)
+}
+
+func updateCloudflared(cfg AppConfig) (string, error) {
+	return installCloudflared(cfg, true)
+}
+
+func installCloudflared(cfg AppConfig, force bool) (string, error) {
+	if err := os.MkdirAll(cfg.Global.CacheDir, 0o700); err != nil {
 		return "", err
 	}
 
@@ -44,8 +60,10 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		exeName += ".exe"
 	}
 	destination := filepath.Join(cfg.Global.CacheDir, exeName)
-	if fileExists(destination) {
-		if err := validateCloudflared(destination); err == nil {
+	desiredVersion := effectiveCloudflaredVersion(cfg, runtime.GOOS)
+
+	if fileExists(destination) && !force {
+		if err := validateCloudflared(destination, desiredVersion); err == nil {
 			log.Printf("using cached cloudflared: %s", destination)
 			return destination, nil
 		} else {
@@ -56,8 +74,14 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 		}
 	}
 
-	downloadURL := cloudflaredDownloadURL(runtime.GOOS, assetName)
-	log.Printf("downloading cloudflared from %s", downloadURL)
+	if fileExists(destination) && force {
+		if err := os.Remove(destination); err != nil {
+			return "", fmt.Errorf("remove cached cloudflared before update: %w", err)
+		}
+	}
+
+	downloadURL := cloudflaredDownloadURL(desiredVersion, assetName)
+	log.Printf("downloading cloudflared %s from %s", desiredVersion, downloadURL)
 	if archive {
 		if err := downloadAndExtractCloudflared(downloadURL, destination); err != nil {
 			return "", err
@@ -72,19 +96,30 @@ func ensureCloudflared(cfg AppConfig) (string, error) {
 			return "", err
 		}
 	}
-	if err := validateCloudflared(destination); err != nil {
+	if err := validateCloudflared(destination, desiredVersion); err != nil {
 		_ = os.Remove(destination)
 		return "", fmt.Errorf("downloaded cloudflared failed validation: %w", err)
 	}
 	return destination, nil
 }
 
-func cloudflaredDownloadURL(goos, assetName string) string {
-	if isMacOSCatalina(goos) {
-		log.Printf("macOS Catalina detected; using cloudflared %s", cloudflaredCatalinaVersion)
-		return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/download/%s/%s", cloudflaredCatalinaVersion, assetName)
+func effectiveCloudflaredVersion(cfg AppConfig, goos string) string {
+	version := strings.TrimSpace(cfg.Cloudflare.Version)
+	if version == "" {
+		version = cloudflaredDefaultVersion
 	}
-	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
+	if version == cloudflaredDefaultVersion && isMacOSCatalina(goos) {
+		log.Printf("macOS Catalina detected; using cloudflared %s", cloudflaredCatalinaVersion)
+		return cloudflaredCatalinaVersion
+	}
+	return version
+}
+
+func cloudflaredDownloadURL(version, assetName string) string {
+	if version == "" || version == cloudflaredDefaultVersion {
+		return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
+	}
+	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/download/%s/%s", version, assetName)
 }
 
 func isMacOSCatalina(goos string) bool {
@@ -121,7 +156,7 @@ func effectiveCloudflaredArch(goos, goarch string) string {
 	}
 }
 
-func validateCloudflared(path string) error {
+func validateCloudflared(path, desiredVersion string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
@@ -132,8 +167,12 @@ func validateCloudflared(path string) error {
 	if err != nil {
 		return fmt.Errorf("%s --version failed: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
-	if strings.TrimSpace(string(out)) == "" {
+	versionOutput := strings.TrimSpace(string(out))
+	if versionOutput == "" {
 		return fmt.Errorf("%s --version returned empty output", path)
+	}
+	if desiredVersion != "" && desiredVersion != cloudflaredDefaultVersion && !strings.Contains(versionOutput, desiredVersion) {
+		return fmt.Errorf("%s version %q does not match configured cloudflare.version %q", path, versionOutput, desiredVersion)
 	}
 	return nil
 }
@@ -170,7 +209,7 @@ func cloudflaredAssetName(goos, goarch string) (string, bool, error) {
 }
 
 func downloadFile(url, destination string) error {
-	response, err := http.Get(url)
+	response, err := cloudflaredHTTPClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -178,24 +217,36 @@ func downloadFile(url, destination string) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed: %s", response.Status)
 	}
-	tempFile := destination + ".tmp"
-	out, err := os.Create(tempFile)
+
+	tempFile, err := os.CreateTemp(filepath.Dir(destination), filepath.Base(destination)+"-*.tmp")
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(out, response.Body)
-	closeErr := out.Close()
+	tempPath := tempFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	_, copyErr := copyLimited(tempFile, response.Body, maxCloudflaredDownloadBytes)
+	closeErr := tempFile.Close()
 	if copyErr != nil {
 		return copyErr
 	}
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(tempFile, destination)
+	if err := os.Rename(tempPath, destination); err != nil {
+		return err
+	}
+	removeTemp = false
+	return nil
 }
 
 func downloadAndExtractCloudflared(url, destination string) error {
-	response, err := http.Get(url)
+	response, err := cloudflaredHTTPClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -221,22 +272,69 @@ func downloadAndExtractCloudflared(url, destination string) error {
 		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "cloudflared" {
 			continue
 		}
-		tempFile := destination + ".tmp"
-		out, err := os.Create(tempFile)
+		if header.Size < 0 || header.Size > maxCloudflaredDownloadBytes {
+			return fmt.Errorf("cloudflared archive member size %d exceeds limit %d", header.Size, maxCloudflaredDownloadBytes)
+		}
+
+		tempFile, err := os.CreateTemp(filepath.Dir(destination), filepath.Base(destination)+"-*.tmp")
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(out, tarReader)
-		closeErr := out.Close()
+		tempPath := tempFile.Name()
+		removeTemp := true
+		defer func() {
+			if removeTemp {
+				_ = os.Remove(tempPath)
+			}
+		}()
+
+		_, copyErr := copyLimited(tempFile, tarReader, maxCloudflaredDownloadBytes)
+		closeErr := tempFile.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		if closeErr != nil {
 			return closeErr
 		}
-		return os.Rename(tempFile, destination)
+		if err := os.Rename(tempPath, destination); err != nil {
+			return err
+		}
+		removeTemp = false
+		return nil
 	}
 	return errors.New("cloudflared binary not found in archive")
+}
+
+func copyLimited(dst io.Writer, src io.Reader, maxBytes int64) (int64, error) {
+	limited := &io.LimitedReader{R: src, N: maxBytes + 1}
+	written, err := io.Copy(dst, limited)
+	if err != nil {
+		return written, err
+	}
+	if written > maxBytes {
+		return written, fmt.Errorf("download exceeds size limit of %d bytes", maxBytes)
+	}
+	return written, nil
+}
+
+func runCloudflaredCommand(cfg AppConfig, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: GoAgent cloudflared update")
+	}
+	switch args[0] {
+	case "update":
+		if len(args) != 1 {
+			return errors.New("usage: GoAgent cloudflared update")
+		}
+		path, err := updateCloudflared(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("updated cloudflared: %s\n", path)
+		return nil
+	default:
+		return fmt.Errorf("unknown cloudflared command %q", args[0])
+	}
 }
 
 func runTokenCommand(cfg AppConfig, args []string) error {
