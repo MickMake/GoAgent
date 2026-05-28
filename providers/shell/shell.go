@@ -139,7 +139,11 @@ func loadConfig(providerBaseDir string) (Config, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, nil
+			cfg := defaultConfig()
+			if err := writeDefaultConfig(path, cfg); err != nil {
+				return Config{}, err
+			}
+			return cfg, nil
 		}
 		return Config{}, err
 	}
@@ -150,6 +154,30 @@ func loadConfig(providerBaseDir string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func defaultConfig() Config {
+	return Config{
+		Endpoints: map[string]Endpoint{
+			"os-version": {
+				Command: "/usr/bin/uname",
+				Args:    []string{"-v"},
+			},
+		},
+	}
+}
+
+func writeDefaultConfig(path string, cfg Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	contents, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, append(contents, '\n'), 0o600)
 }
 
 func expandPath(path string) string {
