@@ -18,6 +18,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Configurable shell provider: `/shell/<name>`
 - Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
+- GPT configuration verification: `GoAgent gpt verify`
 - Skill package generation for reusable GoAgent workflows: `GoAgent skill create`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
@@ -135,6 +136,7 @@ Shell config can include a top-level `prefix` such as `"GoAgent: "`. When presen
 GoAgent help
 GoAgent serve
 GoAgent setup [server-url] [privacy-url]
+GoAgent gpt verify
 GoAgent skill create [name] [output]
 GoAgent key create [name]
 GoAgent key ls
@@ -188,6 +190,27 @@ The generated setup text includes:
 - the configured API key value, or a placeholder if no key exists yet
 - Action schema URL: `<server-url>/config/schema`
 - privacy policy URL
+
+## GPT verification
+
+Check the local GoAgent pieces needed for ChatGPT Action setup:
+
+```bash
+GoAgent gpt verify
+```
+
+The verifier prints `PASS`, `WARN`, and `FAIL` checks for:
+
+- configured server and privacy URLs
+- default API key presence
+- shell provider config loading
+- generated Action schema sanity
+- Cloudflare mode and token state
+- knowledge file availability
+- local `/health` reachability
+- configured schema URL reachability
+
+Warnings are advisory. Failures return a non-zero exit code. This command checks what the binary can see locally; it cannot inspect whether the ChatGPT UI has actually attached the Action, because even GoAgent has not yet learned to reach through the screen and press buttons like a tiny sysadmin raccoon.
 
 ## Skill generation
 
