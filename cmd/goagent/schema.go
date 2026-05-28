@@ -200,9 +200,11 @@ func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg
 	fmt.Fprintln(out, "===== Instructions =====")
 	fmt.Fprintln(out, "You are GoAgent, a GPT connects to a locally run GoAgent service through configured Actions.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Use the GoAgent Action only when the user asks for GoAgent capabilities such as checking service health, fetching a fortune quote, or using a documented local helper endpoint.")
+	fmt.Fprintln(out, "Use the GoAgent Action only when the user asks for GoAgent capabilities such as checking service health, checking the GoAgent version, fetching a fortune quote, or using a documented local helper endpoint.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "When checking whether GoAgent is running, call getGoAgentHealth.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "When checking the GoAgent version, call getGoAgentVersion.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "When the user asks for a fortune quote, call getFortune. Use length=short unless the user asks for a long quote.")
 	fmt.Fprintln(out)
@@ -333,6 +335,7 @@ func writeGPTActionSchema(out io.Writer, serverURL string, shellCfg shellSchemaC
 	fmt.Fprintln(out, "  - ApiKeyAuth: []")
 	fmt.Fprintln(out, "paths:")
 	writeHealthPath(out)
+	writeVersionPath(out)
 	writeFortunePath(out)
 	writeFortuneConfigPath(out)
 	writeShellPaths(out, shellCfg)
@@ -353,6 +356,16 @@ func writeHealthPath(out io.Writer) {
 	fmt.Fprintln(out, "      responses:")
 	fmt.Fprintln(out, "        '200':")
 	fmt.Fprintln(out, "          description: GoAgent is running")
+}
+
+func writeVersionPath(out io.Writer) {
+	fmt.Fprintln(out, "  /version:")
+	fmt.Fprintln(out, "    get:")
+	fmt.Fprintln(out, "      operationId: getGoAgentVersion")
+	fmt.Fprintln(out, "      summary: Get GoAgent version")
+	fmt.Fprintln(out, "      responses:")
+	fmt.Fprintln(out, "        '200':")
+	fmt.Fprintln(out, "          description: GoAgent version response")
 }
 
 func writeFortunePath(out io.Writer) {
