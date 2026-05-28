@@ -110,9 +110,10 @@ func validateEndpoint(endpoint Endpoint) (string, string, error) {
 		if !filepath.IsAbs(chroot) {
 			return "", "", fmt.Errorf("chroot must be an absolute path or start with ~/; got %q", endpoint.Chroot)
 		}
+		chroot = filepath.Clean(chroot)
 	}
 
-	return filepath.Clean(command), filepath.Clean(chroot), nil
+	return filepath.Clean(command), chroot, nil
 }
 
 func resolveArgs(configuredArgs []string, r *http.Request) ([]string, error) {
