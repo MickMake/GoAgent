@@ -17,14 +17,22 @@ import (
 	"github.com/MickMake/GoAgent/providers/shell"
 )
 
+const GoAgentVersion = "0.1.0"
+
 type Response struct {
 	Quote string `json:"quote,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 
+type VersionResponse struct {
+	Service string `json:"service"`
+	Version string `json:"version"`
+}
+
 type RootResponse struct {
 	Service   string   `json:"service"`
 	Status    string   `json:"status"`
+	Version   string   `json:"version"`
 	Endpoints []string `json:"endpoints"`
 }
 
@@ -126,6 +134,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", root)
 	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/version", version)
 	mux.HandleFunc("/config/schema", configSchemaHandler(cfg))
 	mux.HandleFunc("/config/privacy", configPrivacyHandler())
 	mux.HandleFunc("/config/knowledge/", knowledgeHandler(apiKey))
@@ -235,9 +244,11 @@ func root(w http.ResponseWriter, r *http.Request) {
 	writeRootJSON(w, http.StatusOK, RootResponse{
 		Service: "GoAgent",
 		Status:  "ok",
+		Version: GoAgentVersion,
 		Endpoints: []string{
 			"/",
 			"/health",
+			"/version",
 			"/config/schema",
 			"/config/privacy",
 			"/config/knowledge/{filename}",
@@ -252,7 +263,19 @@ func health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Quote: "ok"})
 }
 
+func version(w http.ResponseWriter, r *http.Request) {
+	writeVersionJSON(w, http.StatusOK, VersionResponse{Service: "GoAgent", Version: GoAgentVersion})
+}
+
 func writeRootJSON(w http.ResponseWriter, status int, payload RootResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("write JSON response: %v", err)
+	}
+}
+
+func writeVersionJSON(w http.ResponseWriter, status int, payload VersionResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
