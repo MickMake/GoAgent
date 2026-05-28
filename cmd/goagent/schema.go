@@ -16,7 +16,9 @@ import (
 )
 
 type shellSchemaConfig struct {
-	Endpoints map[string]shellSchemaEndpoint `json:"endpoints"`
+	Prefix       string                         `json:"prefix,omitempty"`
+	Instructions []string                       `json:"instructions,omitempty"`
+	Endpoints    map[string]shellSchemaEndpoint `json:"endpoints"`
 }
 
 type shellSchemaEndpoint struct {
@@ -273,6 +275,19 @@ func writeShellInstructions(out io.Writer, shellCfg shellSchemaConfig) {
 		return
 	}
 
+	if prefix := strings.TrimSpace(shellCfg.Prefix); prefix != "" {
+		fmt.Fprintf(out, "When a GoAgent shell endpoint response includes prefix=%q, begin the final answer with that exact prefix.\n", prefixWithTrailingSpace(prefix))
+		fmt.Fprintln(out)
+	}
+	for _, instruction := range shellCfg.Instructions {
+		instruction = strings.TrimSpace(instruction)
+		if instruction == "" {
+			continue
+		}
+		fmt.Fprintln(out, instruction)
+		fmt.Fprintln(out)
+	}
+
 	fmt.Fprintln(out, "Documented shell helper endpoints:")
 	for _, name := range entries {
 		endpoint := shellCfg.Endpoints[name]
@@ -287,6 +302,13 @@ func writeShellInstructions(out io.Writer, shellCfg shellSchemaConfig) {
 		}
 	}
 	fmt.Fprintln(out)
+}
+
+func prefixWithTrailingSpace(prefix string) string {
+	if prefix != "" && !strings.HasSuffix(prefix, " ") {
+		return prefix + " "
+	}
+	return prefix
 }
 
 func conversationStarters(shellCfg shellSchemaConfig) []string {
