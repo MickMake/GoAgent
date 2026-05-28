@@ -337,6 +337,7 @@ func writeGPTActionSchema(out io.Writer, serverURL string, shellCfg shellSchemaC
 	writeFortuneConfigPath(out)
 	writeShellPaths(out, shellCfg)
 	fmt.Fprintln(out, "components:")
+	fmt.Fprintln(out, "  schemas: {}")
 	fmt.Fprintln(out, "  securitySchemes:")
 	fmt.Fprintln(out, "    ApiKeyAuth:")
 	fmt.Fprintln(out, "      type: apiKey")
