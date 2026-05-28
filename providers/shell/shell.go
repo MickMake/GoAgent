@@ -22,10 +22,13 @@ type Endpoint struct {
 }
 
 type Config struct {
-	Endpoints map[string]Endpoint `json:"endpoints"`
+	Prefix       string              `json:"prefix,omitempty"`
+	Instructions []string            `json:"instructions,omitempty"`
+	Endpoints    map[string]Endpoint `json:"endpoints"`
 }
 
 type Response struct {
+	Prefix   string   `json:"prefix,omitempty"`
 	Endpoint string   `json:"endpoint,omitempty"`
 	Command  string   `json:"command,omitempty"`
 	Args     []string `json:"args,omitempty"`
@@ -38,6 +41,10 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 	cfg, err := loadConfig(providerBaseDir)
 	if err != nil {
 		return err
+	}
+	prefix := strings.TrimSpace(cfg.Prefix)
+	if prefix != "" && !strings.HasSuffix(prefix, " ") {
+		prefix += " "
 	}
 
 	for endpointName, endpoint := range cfg.Endpoints {
@@ -53,55 +60,62 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				w.Header().Set("Allow", "GET")
-				writeJSON(w, http.StatusMethodNotAllowed, Response{Endpoint: path, Error: "method not allowed"})
+				writeJSON(w, http.StatusMethodNotAllowed, withPrefix(prefix, Response{Endpoint: path, Error: "method not allowed"}))
 				return
 			}
 
 			resolvedArgs, err := resolveArgs(ep.Args, r)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, Response{
+				writeJSON(w, http.StatusBadRequest, withPrefix(prefix, Response{
 					Endpoint: path,
 					Error:    err.Error(),
-				})
+				}))
 				return
 			}
 
 			cmd := exec.Command(command, resolvedArgs...)
 			if err := applyChroot(cmd, chroot); err != nil {
-				writeJSON(w, http.StatusInternalServerError, Response{
+				writeJSON(w, http.StatusInternalServerError, withPrefix(prefix, Response{
 					Endpoint: path,
 					Command:  command,
 					Args:     resolvedArgs,
 					Chroot:   chroot,
 					Error:    err.Error(),
-				})
+				}))
 				return
 			}
 
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, Response{
+				writeJSON(w, http.StatusInternalServerError, withPrefix(prefix, Response{
 					Endpoint: path,
 					Command:  command,
 					Args:     resolvedArgs,
 					Chroot:   chroot,
 					Error:    err.Error(),
 					Output:   strings.TrimSpace(string(out)),
-				})
+				}))
 				return
 			}
 
-			writeJSON(w, http.StatusOK, Response{
+			writeJSON(w, http.StatusOK, withPrefix(prefix, Response{
 				Endpoint: path,
 				Command:  command,
 				Args:     resolvedArgs,
 				Chroot:   chroot,
 				Output:   strings.TrimSpace(string(out)),
-			})
+			}))
 		}))
 	}
 
 	return nil
+}
+
+func withPrefix(prefix string, response Response) Response {
+	if prefix != "" {
+		response.Prefix = prefix
+	}
+	return response
 }
 
 func validateEndpoint(endpoint Endpoint) (string, string, error) {
@@ -168,6 +182,10 @@ func loadConfig(providerBaseDir string) (Config, error) {
 
 func defaultConfig() Config {
 	return Config{
+		Prefix: "GoAgent: ",
+		Instructions: []string{
+			"When a shell endpoint response includes a prefix field, begin the final answer with that exact prefix.",
+		},
 		Endpoints: map[string]Endpoint{
 			"os-version": {
 				Command:              "/usr/bin/uname",
