@@ -18,6 +18,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Configurable shell provider: `/shell/<name>`
 - Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
+- Skill package generation for reusable GoAgent workflows: `GoAgent skill create`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
 - Designed for ChatGPT Actions and Skill-guided workflows
@@ -134,6 +135,7 @@ Shell config can include a top-level `prefix` such as `"GoAgent: "`. When presen
 GoAgent help
 GoAgent serve
 GoAgent setup [server-url] [privacy-url]
+GoAgent skill create [name] [output]
 GoAgent key create [name]
 GoAgent key ls
 GoAgent key rm <name>
@@ -186,6 +188,46 @@ The generated setup text includes:
 - the configured API key value, or a placeholder if no key exists yet
 - Action schema URL: `<server-url>/config/schema`
 - privacy policy URL
+
+## Skill generation
+
+Generate a reusable ChatGPT Skill package from the current GoAgent setup:
+
+```bash
+GoAgent skill create
+```
+
+This writes:
+
+```text
+skill.zip
+```
+
+The default skill name is:
+
+```text
+local-goagent
+```
+
+You can provide a custom skill name and output path:
+
+```bash
+GoAgent skill create workshop-goagent ./dist
+```
+
+If the output path is a directory or does not end with `skill.zip`, GoAgent writes `skill.zip` inside it.
+
+The generated Skill includes:
+
+- `SKILL.md` with GoAgent-specific instructions and trigger guidance
+- `agents/openai.yaml` metadata
+- `references/goagent-setup.md` copied from the current `GoAgent setup` output
+- `references/action-schema.yaml` generated from current provider config
+- `references/action-schema-url.md` with schema, privacy, and authentication notes
+- `references/shell-endpoints.md` generated from the current shell provider config
+- `references/knowledge-files.md` if knowledge files exist
+
+The Skill helps ChatGPT follow GoAgent conventions, but it does not install the Custom GPT Action or API key by itself. It is a very useful clipboard, not a licensed electrician.
 
 ## GPT Action schema
 
