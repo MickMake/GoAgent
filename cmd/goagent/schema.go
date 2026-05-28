@@ -20,9 +20,12 @@ type shellSchemaConfig struct {
 }
 
 type shellSchemaEndpoint struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Chroot  string   `json:"chroot,omitempty"`
+	Command              string   `json:"command"`
+	Args                 []string `json:"args"`
+	Chroot               string   `json:"chroot,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Instruction          string   `json:"instruction,omitempty"`
+	ConversationStarters []string `json:"conversation_starters,omitempty"`
 }
 
 func runSetupCommand(cfg AppConfig, args []string) error {
@@ -208,6 +211,7 @@ func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "When the user asks for a fortune quote, call getFortune. Use length=short unless the user asks for a long quote.")
 	fmt.Fprintln(out)
+	writeShellInstructions(out, shellCfg)
 	fmt.Fprintln(out, "If GoAgent returns a marker field, include it verbatim in the final response so the user can confirm the endpoint was reached.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Do not invent endpoints, shell commands, file paths, or tool names. Only call endpoints that are explicitly present in the Action schema.")
@@ -263,6 +267,28 @@ func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg
 	fmt.Fprintln(out, privacyURL)
 }
 
+func writeShellInstructions(out io.Writer, shellCfg shellSchemaConfig) {
+	entries := sortedShellEndpointNames(shellCfg)
+	if len(entries) == 0 {
+		return
+	}
+
+	fmt.Fprintln(out, "Documented shell helper endpoints:")
+	for _, name := range entries {
+		endpoint := shellCfg.Endpoints[name]
+		operationID := "runShell" + operationName(strings.Trim(name, "/"))
+		if endpoint.Description != "" {
+			fmt.Fprintf(out, "- %s: %s\n", operationID, endpoint.Description)
+		} else {
+			fmt.Fprintf(out, "- %s: configured shell endpoint %s.\n", operationID, strings.Trim(name, "/"))
+		}
+		if endpoint.Instruction != "" {
+			fmt.Fprintf(out, "  %s\n", endpoint.Instruction)
+		}
+	}
+	fmt.Fprintln(out)
+}
+
 func conversationStarters(shellCfg shellSchemaConfig) []string {
 	starters := []string{
 		"Is GoAgent running.",
@@ -272,21 +298,34 @@ func conversationStarters(shellCfg shellSchemaConfig) []string {
 		"GoAgent, get me a long fortune quote.",
 	}
 
-	if len(shellCfg.Endpoints) == 0 {
-		return starters
+	for _, name := range sortedShellEndpointNames(shellCfg) {
+		endpoint := shellCfg.Endpoints[name]
+		if len(endpoint.ConversationStarters) > 0 {
+			starters = append(starters, endpoint.ConversationStarters...)
+			continue
+		}
+		trimmed := strings.Trim(name, "/")
+		if trimmed != "" {
+			starters = append(starters, "GoAgent, run the "+trimmed+" helper.")
+		}
 	}
+	return starters
+}
+
+func sortedShellEndpointNames(shellCfg shellSchemaConfig) []string {
+	if len(shellCfg.Endpoints) == 0 {
+		return nil
+	}
+
 	names := make([]string, 0, len(shellCfg.Endpoints))
 	for name := range shellCfg.Endpoints {
-		name = strings.Trim(name, "/")
-		if name != "" {
-			names = append(names, name)
+		trimmed := strings.Trim(name, "/")
+		if trimmed != "" {
+			names = append(names, trimmed)
 		}
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		starters = append(starters, "GoAgent, run the "+name+" helper.")
-	}
-	return starters
+	return names
 }
 
 func configSchemaHandler(cfg AppConfig) http.HandlerFunc {
@@ -418,27 +457,21 @@ func writeFortuneConfigPath(out io.Writer) {
 }
 
 func writeShellPaths(out io.Writer, shellCfg shellSchemaConfig) {
-	if len(shellCfg.Endpoints) == 0 {
-		return
-	}
-
-	names := make([]string, 0, len(shellCfg.Endpoints))
-	for name := range shellCfg.Endpoints {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, rawName := range names {
-		endpoint := shellCfg.Endpoints[rawName]
-		name := strings.Trim(rawName, "/")
-		if name == "" {
+	for _, name := range sortedShellEndpointNames(shellCfg) {
+		endpoint := shellCfg.Endpoints[name]
+		pathName := strings.Trim(name, "/")
+		if pathName == "" {
 			continue
 		}
 
-		fmt.Fprintf(out, "  /shell/%s:\n", yamlPathSegment(name))
+		fmt.Fprintf(out, "  /shell/%s:\n", yamlPathSegment(pathName))
 		fmt.Fprintln(out, "    get:")
-		fmt.Fprintf(out, "      operationId: %s\n", yamlString("runShell"+operationName(name)))
-		fmt.Fprintf(out, "      summary: Run configured shell endpoint %s\n", yamlString(name))
+		fmt.Fprintf(out, "      operationId: %s\n", yamlString("runShell"+operationName(pathName)))
+		if endpoint.Description != "" {
+			fmt.Fprintf(out, "      summary: %s\n", yamlString(endpoint.Description))
+		} else {
+			fmt.Fprintf(out, "      summary: Run configured shell endpoint %s\n", yamlString(pathName))
+		}
 		params := shellQueryParams(endpoint.Args)
 		if len(params) > 0 {
 			fmt.Fprintln(out, "      parameters:")
