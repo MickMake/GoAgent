@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,30 +25,55 @@ type shellSchemaEndpoint struct {
 	Chroot  string   `json:"chroot,omitempty"`
 }
 
-func runShowCommand(cfg AppConfig, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: GoAgent show schema [server-url]")
+func runSetupCommand(cfg AppConfig, args []string) error {
+	if len(args) > 2 {
+		return errors.New("usage: GoAgent setup [server-url] [privacy-url]")
 	}
 
-	switch args[0] {
-	case "schema":
-		return runShowSchemaCommand(cfg, args[1:])
-	default:
-		return fmt.Errorf("unknown show command %q", args[0])
-	}
-}
+	serverURL := defaultSetupServerURL(cfg)
+	privacyURL := cfg.GPT.PrivacyURL
 
-func runShowSchemaCommand(cfg AppConfig, args []string) error {
-	if len(args) > 1 {
-		return errors.New("usage: GoAgent show schema [server-url]")
-	}
-
-	serverURL := "http://" + cfg.Listener.ListenAddr
-	if len(args) == 1 {
+	if len(args) >= 1 {
 		serverURL = normalizeSchemaServerURL(args[0])
 	}
-	if _, err := url.ParseRequestURI(serverURL); err != nil {
-		return fmt.Errorf("invalid server URL %q: %w", serverURL, err)
+	if len(args) >= 2 {
+		privacyURL = normalizeSchemaServerURL(args[1])
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	var err error
+	if len(args) < 1 {
+		serverURL, err = promptForSetupURL(reader, "Server URL", serverURL, true)
+		if err != nil {
+			return err
+		}
+	}
+	if len(args) < 2 {
+		privacyURL, err = promptForSetupURL(reader, "Privacy URL", privacyURL, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := validateSetupURL("server URL", serverURL, true); err != nil {
+		return err
+	}
+	if err := validateSetupURL("privacy URL", privacyURL, true); err != nil {
+		return err
+	}
+
+	if cfg.GPT.ServerURL != serverURL || cfg.GPT.PrivacyURL != privacyURL {
+		cfg.GPT.ServerURL = serverURL
+		cfg.GPT.PrivacyURL = privacyURL
+		if err := saveConfig(cfg); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "saved GPT setup URLs to config")
+	}
+
+	apiKey, err := readNamedSecret(goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
+	if err != nil || apiKey == "" {
+		apiKey = "<run `GoAgent key create` and paste the generated X-API-Key here>"
 	}
 
 	shellCfg, err := loadShellSchemaConfig(cfg.Global.ProviderBaseDir)
@@ -53,8 +81,62 @@ func runShowSchemaCommand(cfg AppConfig, args []string) error {
 		return err
 	}
 
-	writeGPTActionSchema(os.Stdout, serverURL, shellCfg)
+	knowledgeFiles, err := listKnowledgeFiles()
+	if err != nil {
+		return err
+	}
+
+	writeGPTSetup(os.Stdout, serverURL, privacyURL, apiKey, shellCfg, knowledgeFiles)
 	return nil
+}
+
+func promptForSetupURL(reader *bufio.Reader, label, defaultValue string, required bool) (string, error) {
+	for {
+		if defaultValue != "" {
+			fmt.Fprintf(os.Stderr, "%s [%s]: ", label, defaultValue)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: ", label)
+		}
+
+		value, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			value = defaultValue
+		}
+		value = normalizeSchemaServerURL(value)
+
+		if err := validateSetupURL(strings.ToLower(label), value, required); err != nil {
+			if errors.Is(err, io.EOF) {
+				return "", err
+			}
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+		return value, nil
+	}
+}
+
+func validateSetupURL(label, value string, required bool) error {
+	if value == "" {
+		if required {
+			return fmt.Errorf("%s is required", label)
+		}
+		return nil
+	}
+	if _, err := url.ParseRequestURI(value); err != nil {
+		return fmt.Errorf("invalid %s %q: %w", label, value, err)
+	}
+	return nil
+}
+
+func defaultSetupServerURL(cfg AppConfig) string {
+	if cfg.GPT.ServerURL != "" {
+		return cfg.GPT.ServerURL
+	}
+	return "http://" + cfg.Listener.ListenAddr
 }
 
 func normalizeSchemaServerURL(raw string) string {
@@ -85,7 +167,191 @@ func loadShellSchemaConfig(providerBaseDir string) (shellSchemaConfig, error) {
 	return cfg, nil
 }
 
-func writeGPTActionSchema(out *os.File, serverURL string, shellCfg shellSchemaConfig) {
+func listKnowledgeFiles() ([]string, error) {
+	knowledgeDir := filepath.Join(mustGoAgentDir(), "knowledge")
+	entries, err := os.ReadDir(knowledgeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	files := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		files = append(files, entry.Name())
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg shellSchemaConfig, knowledgeFiles []string) {
+	fmt.Fprintln(out, "# GPT Configure")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Name")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "`GoAgent`")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Description")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "`A locally run helper GPT that uses the GoAgent service to call endpoints backed by shell scripts.`")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Instructions")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, "You are GoAgent, a GPT connects to a locally run GoAgent service through configured Actions.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Use the GoAgent Action only when the user asks for GoAgent capabilities such as checking service health, fetching a fortune quote, or using a documented local helper endpoint.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "When checking whether GoAgent is running, call getGoAgentHealth.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "When the user asks for a fortune quote, call getFortune. Use length=short unless the user asks for a long quote.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "If GoAgent returns a marker field, include it verbatim in the final response so the user can confirm the endpoint was reached.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Do not invent endpoints, shell commands, file paths, or tool names. Only call endpoints that are explicitly present in the Action schema.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Do not call shell-style endpoints unless they are explicitly documented in the Action schema and the user clearly asks for that capability.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "If the GoAgent Action fails, briefly report the failure and suggest checking:")
+	fmt.Fprintln(out, "- whether GoAgent is running,")
+	fmt.Fprintln(out, "- whether the Cloudflare tunnel URL is current,")
+	fmt.Fprintln(out, "- whether the X-API-Key value matches the running GoAgent key.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Keep responses concise and practical.")
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Conversation starters")
+	fmt.Fprintln(out)
+	for _, starter := range conversationStarters(shellCfg) {
+		fmt.Fprintf(out, "- %s\n", starter)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Knowledge")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "```")
+	if len(knowledgeFiles) == 0 {
+		fmt.Fprintln(out, "No knowledge files found in ~/.GoAgent/knowledge/.")
+		fmt.Fprintln(out, "Files placed in ~/.GoAgent/knowledge/<filename> will be listed here as:")
+		fmt.Fprintf(out, "%s/config/knowledge/<filename>\n", serverURL)
+	} else {
+		fmt.Fprintln(out, "Files placed in ~/.GoAgent/knowledge/<filename> are available as:")
+		for _, file := range knowledgeFiles {
+			fmt.Fprintf(out, "%s/config/knowledge/%s\n", serverURL, pathEscape(file))
+		}
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Knowledge URLs require the X-API-Key header.")
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Recommended Model")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "`Any.`")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Capabilities")
+	fmt.Fprintln(out, "_ Web Search")
+	fmt.Fprintln(out, "_ Apps")
+	fmt.Fprintln(out, "_ Canvas")
+	fmt.Fprintln(out, "_ Image Generation")
+	fmt.Fprintln(out, "_ Code Interpreter & Data Analysis")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Actions")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "################################################################################")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "# Action")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Authentication")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "`API Key`")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "```text")
+	fmt.Fprintln(out, apiKey)
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Header name:")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "`X-API-Key`")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Schema")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "```")
+	fmt.Fprintf(out, "%s/config/schema\n", serverURL)
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "This URL does not require an API key.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "## Privacy Policy")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, privacyURL)
+	fmt.Fprintln(out, "```")
+}
+
+func conversationStarters(shellCfg shellSchemaConfig) []string {
+	starters := []string{
+		"Is GoAgent running.",
+		"What version of GoAgent is running.",
+		"Show me all available GoAgent endpoints.",
+		"GoAgent, get me a short fortune quote.",
+		"GoAgent, get me a long fortune quote.",
+	}
+
+	if len(shellCfg.Endpoints) == 0 {
+		return starters
+	}
+	names := make([]string, 0, len(shellCfg.Endpoints))
+	for name := range shellCfg.Endpoints {
+		name = strings.Trim(name, "/")
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		starters = append(starters, "GoAgent, run the "+name+" helper.")
+	}
+	return starters
+}
+
+func configSchemaHandler(cfg AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
+			return
+		}
+		shellCfg, err := loadShellSchemaConfig(cfg.Global.ProviderBaseDir)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, Response{Error: err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		writeGPTActionSchema(w, defaultSetupServerURL(cfg), shellCfg)
+	}
+}
+
+func knowledgeHandler(apiKey string) http.HandlerFunc {
+	return requireAPIKey(apiKey, func(w http.ResponseWriter, r *http.Request) {
+		prefix := "/config/knowledge/"
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, prefix)
+		if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(mustGoAgentDir(), "knowledge", name))
+	})
+}
+
+func writeGPTActionSchema(out io.Writer, serverURL string, shellCfg shellSchemaConfig) {
 	fmt.Fprintln(out, "openapi: 3.1.0")
 	fmt.Fprintln(out, "info:")
 	fmt.Fprintln(out, "  title: GoAgent")
@@ -108,17 +374,17 @@ func writeGPTActionSchema(out *os.File, serverURL string, shellCfg shellSchemaCo
 	fmt.Fprintln(out, "      name: X-API-Key")
 }
 
-func writeHealthPath(out *os.File) {
+func writeHealthPath(out io.Writer) {
 	fmt.Fprintln(out, "  /health:")
 	fmt.Fprintln(out, "    get:")
-	fmt.Fprintln(out, "      operationId: health")
+	fmt.Fprintln(out, "      operationId: getGoAgentHealth")
 	fmt.Fprintln(out, "      summary: Check GoAgent health")
 	fmt.Fprintln(out, "      responses:")
 	fmt.Fprintln(out, "        '200':")
 	fmt.Fprintln(out, "          description: GoAgent is running")
 }
 
-func writeFortunePath(out *os.File) {
+func writeFortunePath(out io.Writer) {
 	fmt.Fprintln(out, "  /fortune:")
 	fmt.Fprintln(out, "    get:")
 	fmt.Fprintln(out, "      operationId: getFortune")
@@ -137,7 +403,7 @@ func writeFortunePath(out *os.File) {
 	fmt.Fprintln(out, "          description: Fortune quote response")
 }
 
-func writeFortuneConfigPath(out *os.File) {
+func writeFortuneConfigPath(out io.Writer) {
 	fmt.Fprintln(out, "  /fortune/config:")
 	fmt.Fprintln(out, "    get:")
 	fmt.Fprintln(out, "      operationId: getFortuneConfig")
@@ -167,7 +433,7 @@ func writeFortuneConfigPath(out *os.File) {
 	fmt.Fprintln(out, "          description: Updated fortune provider configuration")
 }
 
-func writeShellPaths(out *os.File, shellCfg shellSchemaConfig) {
+func writeShellPaths(out io.Writer, shellCfg shellSchemaConfig) {
 	if len(shellCfg.Endpoints) == 0 {
 		return
 	}
@@ -242,6 +508,10 @@ func operationName(name string) string {
 		return "Endpoint"
 	}
 	return b.String()
+}
+
+func pathEscape(segment string) string {
+	return url.PathEscape(segment)
 }
 
 func yamlPathSegment(segment string) string {
