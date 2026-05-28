@@ -51,6 +51,12 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 		}
 
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.Header().Set("Allow", "GET")
+				writeJSON(w, http.StatusMethodNotAllowed, Response{Endpoint: path, Error: "method not allowed"})
+				return
+			}
+
 			resolvedArgs, err := resolveArgs(ep.Args, r)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, Response{
