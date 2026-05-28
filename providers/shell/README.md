@@ -35,12 +35,16 @@ Do not expose broad command runners, scripting interpreters with user-controlled
 
 ```json
 {
+  "prefix": "GoAgent: ",
+  "instructions": [
+    "When a shell endpoint response includes a prefix field, begin the final answer with that exact prefix."
+  ],
   "endpoints": {
     "endpoint-name": {
       "command": "/absolute/path/to/program",
       "args": ["fixed", "$query_parameter"],
       "description": "Short summary used in the generated Action schema.",
-      "instruction": "Instruction added to GoAgent setup output.",
+      "instruction": "Endpoint-specific instruction added to GoAgent setup output.",
       "conversation_starters": [
         "Example starter added to GoAgent setup output."
       ]
@@ -54,11 +58,16 @@ Required fields:
 - `command`: absolute command path, or a path beginning with `~/`
 - `args`: command argument list
 
-Optional fields:
+Optional top-level fields:
+
+- `prefix`: returned as `prefix` in shell endpoint JSON responses; omit it or set it to an empty string to disable this field
+- `instructions`: global shell-provider instructions added to `GoAgent setup` when the shell provider config is present
+
+Optional endpoint fields:
 
 - `chroot`: working root used by the command, if supported by the current platform/runtime
 - `description`: used as the generated OpenAPI summary
-- `instruction`: added to the GPT instructions printed by `GoAgent setup`
+- `instruction`: endpoint-specific instruction added to GoAgent setup output
 - `conversation_starters`: added to the conversation starters printed by `GoAgent setup`
 
 After editing the config, rerun:
@@ -69,12 +78,41 @@ GoAgent setup https://your-goagent-url.example
 
 Then update the GPT instructions, starters, and Action schema from the generated output.
 
+## Prefix behaviour
+
+If `prefix` is configured, every shell endpoint JSON response includes it:
+
+```json
+{
+  "prefix": "GoAgent: ",
+  "endpoint": "/shell/os-version",
+  "output": "..."
+}
+```
+
+`GoAgent setup` also emits a global shell-provider instruction telling the GPT to start final answers with that exact prefix when a shell response includes it.
+
+To disable prefix behaviour, remove `prefix` from the config or set it to an empty string:
+
+```json
+{
+  "prefix": "",
+  "endpoints": {}
+}
+```
+
+This keeps the feature opt-in per shell config, because not every cupboard needs a label maker, despite what the label maker says.
+
 ## Example 1: OS version
 
 This endpoint returns the local operating system version from `uname -v`.
 
 ```json
 {
+  "prefix": "GoAgent: ",
+  "instructions": [
+    "When a shell endpoint response includes a prefix field, begin the final answer with that exact prefix."
+  ],
   "endpoints": {
     "os-version": {
       "command": "/usr/bin/uname",
@@ -109,6 +147,10 @@ This endpoint accepts user input as the `text` query parameter and uppercases it
 
 ```json
 {
+  "prefix": "GoAgent: ",
+  "instructions": [
+    "When a shell endpoint response includes a prefix field, begin the final answer with that exact prefix."
+  ],
   "endpoints": {
     "upper": {
       "command": "/usr/bin/awk",
@@ -154,6 +196,10 @@ A complete default-style config with both examples:
 
 ```json
 {
+  "prefix": "GoAgent: ",
+  "instructions": [
+    "When a shell endpoint response includes a prefix field, begin the final answer with that exact prefix."
+  ],
   "endpoints": {
     "os-version": {
       "command": "/usr/bin/uname",
