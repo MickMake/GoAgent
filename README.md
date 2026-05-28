@@ -15,7 +15,9 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Auto-download and cache of `cloudflared`
 - Fortune provider: `/fortune`
 - Optional shell provider: `/shell/<name>`
-- OpenAPI schema generation for ChatGPT Actions: `GoAgent show schema`
+- GPT setup output for ChatGPT configuration: `GoAgent setup`
+- Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
+- Optional protected knowledge files under `~/.GoAgent/knowledge/`
 - Designed for ChatGPT Actions and Skill-guided workflows
 - Tiny and gloriously boring, which is often where reliability hides
 
@@ -107,6 +109,8 @@ Typical layout:
 ├── keys/
 │   ├── GoAgent-default.key
 │   └── token-default.token
+├── knowledge/
+│   └── notes.md
 └── providers/
     └── shell/
         └── config.json
@@ -117,6 +121,7 @@ Typical layout:
 ```text
 GoAgent help
 GoAgent serve
+GoAgent setup [server-url] [privacy-url]
 GoAgent key create [name]
 GoAgent key ls
 GoAgent key rm <name>
@@ -126,34 +131,61 @@ GoAgent token rm <name>
 GoAgent config show
 GoAgent config set <section.key> <value>
 GoAgent config reset
-GoAgent show schema [server-url]
 ```
 
 `GoAgent` with no arguments prints help.
 
 `GoAgent serve` starts the daemon. Runtime options such as listen address and Cloudflare tunnel behaviour are read from config only.
 
+## GPT setup
+
+Generate the full text needed to configure a Custom GPT and its Action:
+
+```bash
+GoAgent setup
+```
+
+If server and privacy URLs are not already stored in config, `setup` prompts for them. Prompt messages and save confirmations are written to stderr so stdout remains copyable setup text.
+
+You can provide both URLs directly:
+
+```bash
+GoAgent setup https://example.trycloudflare.com https://example.com/privacy
+```
+
+When URLs are supplied, they are saved into config under:
+
+```text
+gpt.server_url
+gpt.privacy_url
+```
+
+Bare hostnames are normalised to `https://` URLs.
+
+The generated setup text includes:
+
+- GPT name, description, and instructions
+- conversation starters based on available providers
+- knowledge file URLs for files in `~/.GoAgent/knowledge/`
+- the configured API key value, or a placeholder if no key exists yet
+- Action schema URL: `<server-url>/config/schema`
+- privacy policy URL
+
 ## GPT Action schema
 
-Generate an OpenAPI YAML schema suitable for a Custom GPT Action:
+The daemon exposes the current OpenAPI YAML schema at:
 
-```bash
-GoAgent show schema
+```text
+/config/schema
 ```
 
-By default, the generated schema uses the configured local listener as the server URL, for example `http://127.0.0.1:8080`.
-
-When using Cloudflare Tunnel, pass the public tunnel URL:
+For example:
 
 ```bash
-GoAgent show schema https://example.trycloudflare.com
+curl http://127.0.0.1:8080/config/schema
 ```
 
-If the URL has no scheme, GoAgent assumes `https://`:
-
-```bash
-GoAgent show schema example.trycloudflare.com
-```
+This endpoint does not require an API key so ChatGPT can load the schema while configuring the Action.
 
 The schema includes:
 
@@ -161,9 +193,25 @@ The schema includes:
 - `/fortune`
 - `/fortune/config`
 - any configured `/shell/<name>` endpoints from `~/.GoAgent/providers/shell/config.json`
-- `X-API-Key` header authentication
+- `X-API-Key` header authentication for protected Action calls
 
 For shell endpoints, any configured argument beginning with `$` becomes a required query parameter in the generated schema. This keeps the schema lined up with provider config, instead of maintaining the same thing twice, which is how small dragons hatch.
+
+## Knowledge files
+
+Files placed in:
+
+```text
+~/.GoAgent/knowledge/
+```
+
+are listed by `GoAgent setup` as:
+
+```text
+<server-url>/config/knowledge/<filename>
+```
+
+Knowledge file URLs require the configured `X-API-Key` header.
 
 ## GoAgent config
 
@@ -195,6 +243,13 @@ Set the default fortune quote length:
 
 ```bash
 GoAgent config set listener.default_quote_length short
+```
+
+Set GPT setup URLs:
+
+```bash
+GoAgent config set gpt.server_url https://example.trycloudflare.com
+GoAgent config set gpt.privacy_url https://example.com/privacy
 ```
 
 Valid quote lengths:
@@ -232,6 +287,10 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "address": "127.0.0.1:8080",
     "default_api_key": "default",
     "default_quote_length": "short"
+  },
+  "gpt": {
+    "server_url": "https://example.trycloudflare.com",
+    "privacy_url": "https://example.com/privacy"
   }
 }
 ```
