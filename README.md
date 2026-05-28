@@ -14,7 +14,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Stored API keys and Cloudflare tunnel tokens
 - Auto-download and cache of `cloudflared`
 - Fortune provider: `/fortune`
-- Optional shell provider: `/shell/<name>`
+- Configurable shell provider: `/shell/<name>`
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
@@ -121,6 +121,8 @@ Typical layout:
 Provider-specific documentation:
 
 - [Shell provider](providers/shell/README.md): configure `/shell/<name>` endpoints, metadata for `GoAgent setup`, query parameters, and chroot examples.
+
+The shell provider is always loaded. Its config file is optional: if `~/.GoAgent/providers/shell/config.json` does not exist, GoAgent writes a small default config. Edit or remove those default endpoints to suit the local machine. As with all cupboards containing local command execution, label the handles clearly before inviting a GPT to open them.
 
 ## CLI commands
 
@@ -252,6 +254,24 @@ Set the default fortune quote length:
 GoAgent config set listener.default_quote_length short
 ```
 
+Set Cloudflare Tunnel behaviour:
+
+```bash
+GoAgent config set cloudflare.enabled true
+GoAgent config set cloudflare.mode auto
+GoAgent config set cloudflare.default_token default
+GoAgent config set cloudflare.log_level info
+```
+
+Cloudflare modes:
+
+```text
+auto           Use a saved token if available; otherwise create a temporary tunnel.
+temporary      Always create a temporary trycloudflare tunnel.
+authenticated  Require a saved Cloudflare tunnel token and run that named tunnel.
+disabled       Do not start Cloudflare Tunnel.
+```
+
 Set GPT setup URLs:
 
 ```bash
@@ -294,6 +314,12 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "address": "127.0.0.1:8080",
     "default_api_key": "default",
     "default_quote_length": "short"
+  },
+  "cloudflare": {
+    "default_token": "default",
+    "enabled": false,
+    "mode": "auto",
+    "log_level": "info"
   },
   "gpt": {
     "server_url": "https://example.trycloudflare.com",
