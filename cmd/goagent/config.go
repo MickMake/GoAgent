@@ -54,6 +54,7 @@ func defaultConfig() AppConfig {
 			Enabled:      false,
 			Mode:         "auto",
 			LogLevel:     "info",
+			Version:      cloudflaredDefaultVersion,
 		},
 		GPT: GPTConfig{},
 	}
@@ -110,6 +111,9 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	}
 	if cfg.Cloudflare.LogLevel == "" {
 		cfg.Cloudflare.LogLevel = defaults.Cloudflare.LogLevel
+	}
+	if cfg.Cloudflare.Version == "" {
+		cfg.Cloudflare.Version = defaults.Cloudflare.Version
 	}
 	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
 	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
@@ -213,6 +217,11 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		cfg.Cloudflare.Mode = value
 	case "cloudflare.log_level":
 		cfg.Cloudflare.LogLevel = value
+	case "cloudflare.version":
+		if strings.TrimSpace(value) == "" {
+			return cfg, errors.New("cloudflare.version cannot be empty")
+		}
+		cfg.Cloudflare.Version = strings.TrimSpace(value)
 	case "gpt.server_url":
 		cfg.GPT.ServerURL = normalizeSchemaServerURL(value)
 	case "gpt.privacy_url":
@@ -229,7 +238,7 @@ func normalizeConfigKey(key string) string {
 		return "global." + key
 	case "address", "default_api_key", "default_quote_length":
 		return "listener." + key
-	case "default_token", "enabled", "mode", "log_level":
+	case "default_token", "enabled", "mode", "log_level", "version":
 		return "cloudflare." + key
 	case "server_url", "privacy_url":
 		return "gpt." + key
