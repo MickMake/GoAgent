@@ -482,8 +482,8 @@ func operationName(name string) string {
 	return b.String()
 }
 
-func pathEscape(segment string) {
-	url.PathEscape(segment)
+func pathEscape(segment string) string {
+	return url.PathEscape(segment)
 }
 
 func yamlPathSegment(segment string) string {
