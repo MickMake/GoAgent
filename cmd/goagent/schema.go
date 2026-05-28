@@ -31,13 +31,8 @@ func runSetupCommand(cfg AppConfig, args []string) error {
 	}
 
 	serverURL := defaultSetupServerURL(cfg)
-	privacyURL := cfg.GPT.PrivacyURL
-
 	if len(args) >= 1 {
 		serverURL = normalizeSchemaServerURL(args[0])
-	}
-	if len(args) >= 2 {
-		privacyURL = normalizeSchemaServerURL(args[1])
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -48,11 +43,12 @@ func runSetupCommand(cfg AppConfig, args []string) error {
 			return err
 		}
 	}
-	if len(args) < 2 {
-		privacyURL, err = promptForSetupURL(reader, "Privacy URL", privacyURL, true)
-		if err != nil {
-			return err
-		}
+
+	privacyURL := defaultSetupPrivacyURL(cfg, serverURL)
+	if len(args) >= 2 {
+		privacyURL = normalizeSchemaServerURL(args[1])
+	} else if cfg.GPT.PrivacyURL == "" {
+		fmt.Fprintf(os.Stderr, "Privacy URL [%s]: using default\n", privacyURL)
 	}
 
 	if err := validateSetupURL("server URL", serverURL, true); err != nil {
@@ -73,7 +69,7 @@ func runSetupCommand(cfg AppConfig, args []string) error {
 
 	apiKey, err := readNamedSecret(goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
 	if err != nil || apiKey == "" {
-		apiKey = "<run `GoAgent key create` and paste the generated X-API-Key here>"
+		apiKey = "<run GoAgent key create and paste the generated X-API-Key here>"
 	}
 
 	shellCfg, err := loadShellSchemaConfig(cfg.Global.ProviderBaseDir)
@@ -109,9 +105,6 @@ func promptForSetupURL(reader *bufio.Reader, label, defaultValue string, require
 		value = normalizeSchemaServerURL(value)
 
 		if err := validateSetupURL(strings.ToLower(label), value, required); err != nil {
-			if errors.Is(err, io.EOF) {
-				return "", err
-			}
 			fmt.Fprintln(os.Stderr, err)
 			continue
 		}
@@ -137,6 +130,13 @@ func defaultSetupServerURL(cfg AppConfig) string {
 		return cfg.GPT.ServerURL
 	}
 	return "http://" + cfg.Listener.ListenAddr
+}
+
+func defaultSetupPrivacyURL(cfg AppConfig, serverURL string) string {
+	if cfg.GPT.PrivacyURL != "" {
+		return cfg.GPT.PrivacyURL
+	}
+	return strings.TrimRight(serverURL, "/") + "/config/privacy"
 }
 
 func normalizeSchemaServerURL(raw string) string {
@@ -189,19 +189,15 @@ func listKnowledgeFiles() ([]string, error) {
 }
 
 func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg shellSchemaConfig, knowledgeFiles []string) {
-	fmt.Fprintln(out, "# GPT Configure")
+	fmt.Fprintln(out, "GPT Configure")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Name")
+	fmt.Fprintln(out, "Name")
+	fmt.Fprintln(out, "GoAgent")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "`GoAgent`")
+	fmt.Fprintln(out, "Description")
+	fmt.Fprintln(out, "A locally run helper GPT that uses the GoAgent service to call endpoints backed by shell scripts.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Description")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "`A locally run helper GPT that uses the GoAgent service to call endpoints backed by shell scripts.`")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Instructions")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, "Instructions")
 	fmt.Fprintln(out, "You are GoAgent, a GPT connects to a locally run GoAgent service through configured Actions.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Use the GoAgent Action only when the user asks for GoAgent capabilities such as checking service health, fetching a fortune quote, or using a documented local helper endpoint.")
@@ -222,17 +218,13 @@ func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg
 	fmt.Fprintln(out, "- whether the X-API-Key value matches the running GoAgent key.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Keep responses concise and practical.")
-	fmt.Fprintln(out, "```")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Conversation starters")
-	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Conversation starters")
 	for _, starter := range conversationStarters(shellCfg) {
 		fmt.Fprintf(out, "- %s\n", starter)
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Knowledge")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, "Knowledge")
 	if len(knowledgeFiles) == 0 {
 		fmt.Fprintln(out, "No knowledge files found in ~/.GoAgent/knowledge/.")
 		fmt.Fprintln(out, "Files placed in ~/.GoAgent/knowledge/<filename> will be listed here as:")
@@ -243,52 +235,32 @@ func writeGPTSetup(out io.Writer, serverURL, privacyURL, apiKey string, shellCfg
 			fmt.Fprintf(out, "%s/config/knowledge/%s\n", serverURL, pathEscape(file))
 		}
 	}
-	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Knowledge URLs require the X-API-Key header.")
-	fmt.Fprintln(out, "```")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Recommended Model")
+	fmt.Fprintln(out, "Recommended Model")
+	fmt.Fprintln(out, "Any.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "`Any.`")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Capabilities")
+	fmt.Fprintln(out, "Capabilities")
 	fmt.Fprintln(out, "_ Web Search")
 	fmt.Fprintln(out, "_ Apps")
 	fmt.Fprintln(out, "_ Canvas")
 	fmt.Fprintln(out, "_ Image Generation")
 	fmt.Fprintln(out, "_ Code Interpreter & Data Analysis")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Actions")
+	fmt.Fprintln(out, "Actions")
+	fmt.Fprintln(out, "Action")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "################################################################################")
+	fmt.Fprintln(out, "Authentication")
+	fmt.Fprintln(out, "API Key")
+	fmt.Fprintln(out, "Header name: X-API-Key")
+	fmt.Fprintf(out, "Key value: %s\n", apiKey)
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "# Action")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Authentication")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "`API Key`")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "```text")
-	fmt.Fprintln(out, apiKey)
-	fmt.Fprintln(out, "```")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Header name:")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "`X-API-Key`")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Schema")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, "Schema")
 	fmt.Fprintf(out, "%s/config/schema\n", serverURL)
-	fmt.Fprintln(out, "```")
-	fmt.Fprintln(out)
 	fmt.Fprintln(out, "This URL does not require an API key.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "## Privacy Policy")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "```")
+	fmt.Fprintln(out, "Privacy Policy")
 	fmt.Fprintln(out, privacyURL)
-	fmt.Fprintln(out, "```")
 }
 
 func conversationStarters(shellCfg shellSchemaConfig) []string {
@@ -510,8 +482,8 @@ func operationName(name string) string {
 	return b.String()
 }
 
-func pathEscape(segment string) string {
-	return url.PathEscape(segment)
+func pathEscape(segment string) {
+	url.PathEscape(segment)
 }
 
 func yamlPathSegment(segment string) string {
