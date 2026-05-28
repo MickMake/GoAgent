@@ -94,6 +94,7 @@ Usage:
 
 Examples:
   GoAgent serve
+  GoAgent setup https://example.trycloudflare.com
   GoAgent setup https://example.trycloudflare.com https://example.com/privacy
   GoAgent key create
   GoAgent config set listener.address 127.0.0.1:8080
@@ -126,6 +127,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	mux.HandleFunc("/", root)
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/config/schema", configSchemaHandler(cfg))
+	mux.HandleFunc("/config/privacy", configPrivacyHandler())
 	mux.HandleFunc("/config/knowledge/", knowledgeHandler(apiKey))
 
 	protect := func(next http.HandlerFunc) http.HandlerFunc {
@@ -237,6 +239,7 @@ func root(w http.ResponseWriter, r *http.Request) {
 			"/",
 			"/health",
 			"/config/schema",
+			"/config/privacy",
 			"/config/knowledge/{filename}",
 			"/fortune",
 			"/fortune/config",
