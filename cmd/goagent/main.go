@@ -72,6 +72,11 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	case "cloudflared":
+		if err := runCloudflaredCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
 	case "config":
 		if err := runConfigCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -96,6 +101,7 @@ Usage:
   GoAgent token add [name] <token>
   GoAgent token ls
   GoAgent token rm <name>
+  GoAgent cloudflared update
   GoAgent config show
   GoAgent config set <section.key> <value>
   GoAgent config reset
@@ -105,6 +111,7 @@ Examples:
   GoAgent setup https://example.trycloudflare.com
   GoAgent setup https://example.trycloudflare.com https://example.com/privacy
   GoAgent key create
+  GoAgent cloudflared update
   GoAgent config set listener.address 127.0.0.1:8080
   GoAgent config show`)
 }
