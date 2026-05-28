@@ -14,6 +14,7 @@ type AppConfig struct {
 	Global     GlobalConfig     `json:"global"`
 	Listener   ListenerConfig   `json:"listener"`
 	Cloudflare CloudflareConfig `json:"cloudflare"`
+	GPT        GPTConfig        `json:"gpt"`
 }
 
 type GlobalConfig struct {
@@ -27,6 +28,11 @@ type ListenerConfig struct {
 	ListenAddr         string `json:"address"`
 	DefaultAPIKey      string `json:"default_api_key"`
 	DefaultQuoteLength string `json:"default_quote_length"`
+}
+
+type GPTConfig struct {
+	ServerURL  string `json:"server_url"`
+	PrivacyURL string `json:"privacy_url"`
 }
 
 func defaultConfig() AppConfig {
@@ -44,11 +50,12 @@ func defaultConfig() AppConfig {
 			DefaultQuoteLength: "short",
 		},
 		Cloudflare: CloudflareConfig{
-			DefaultToken:        "default",
-			Enabled:       false,
-			Mode:          "auto",
-			LogLevel: "info",
+			DefaultToken: "default",
+			Enabled:      false,
+			Mode:         "auto",
+			LogLevel:     "info",
 		},
+		GPT: GPTConfig{},
 	}
 }
 
@@ -107,6 +114,8 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
 	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
 	cfg.Global.ProviderBaseDir = expandPath(cfg.Global.ProviderBaseDir)
+	cfg.GPT.ServerURL = normalizeSchemaServerURL(cfg.GPT.ServerURL)
+	cfg.GPT.PrivacyURL = normalizeSchemaServerURL(cfg.GPT.PrivacyURL)
 	return cfg
 }
 
@@ -204,6 +213,10 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		cfg.Cloudflare.Mode = value
 	case "cloudflare.log_level":
 		cfg.Cloudflare.LogLevel = value
+	case "gpt.server_url":
+		cfg.GPT.ServerURL = normalizeSchemaServerURL(value)
+	case "gpt.privacy_url":
+		cfg.GPT.PrivacyURL = normalizeSchemaServerURL(value)
 	default:
 		return cfg, fmt.Errorf("unknown config key %q", key)
 	}
@@ -218,6 +231,8 @@ func normalizeConfigKey(key string) string {
 		return "listener." + key
 	case "default_token", "enabled", "mode", "log_level":
 		return "cloudflare." + key
+	case "server_url", "privacy_url":
+		return "gpt." + key
 	default:
 		return key
 	}
