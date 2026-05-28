@@ -24,7 +24,7 @@ type GlobalConfig struct {
 }
 
 type ListenerConfig struct {
-	ListenAddr         string `json:"listen_addr"`
+	ListenAddr         string `json:"address"`
 	DefaultAPIKey      string `json:"default_api_key"`
 	DefaultQuoteLength string `json:"default_quote_length"`
 }
@@ -180,7 +180,7 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 			return cfg, errors.New("global.shutdown_timeout_seconds must be greater than zero")
 		}
 		cfg.Global.ShutdownTimeoutSeconds = parsed
-	case "listener.listen_addr":
+	case "listener.address":
 		cfg.Listener.ListenAddr = value
 	case "listener.default_api_key":
 		cfg.Listener.DefaultAPIKey = value
@@ -214,7 +214,7 @@ func normalizeConfigKey(key string) string {
 	switch key {
 	case "cache_dir", "key_dir", "provider_base_dir", "shutdown_timeout_seconds":
 		return "global." + key
-	case "listen_addr", "default_api_key", "default_quote_length":
+	case "address", "default_api_key", "default_quote_length":
 		return "listener." + key
 	case "default_token", "enabled", "mode", "log_level":
 		return "cloudflare." + key

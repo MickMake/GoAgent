@@ -182,7 +182,7 @@ GoAgent config reset
 Set the local listen address:
 
 ```bash
-GoAgent config set listener.listen_addr 127.0.0.1:8080
+GoAgent config set listener.address 127.0.0.1:8080
 ```
 
 Set the default API key name:
@@ -229,7 +229,7 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "shutdown_timeout_seconds": 5
   },
   "listener": {
-    "listen_addr": "127.0.0.1:8080",
+    "address": "127.0.0.1:8080",
     "default_api_key": "default",
     "default_quote_length": "short"
   }

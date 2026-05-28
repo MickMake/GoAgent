@@ -95,7 +95,7 @@ Usage:
 Examples:
   GoAgent serve
   GoAgent key create
-  GoAgent config set listener.listen_addr 127.0.0.1:8080
+  GoAgent config set listener.address 127.0.0.1:8080
   GoAgent show schema https://example.trycloudflare.com
   GoAgent config show`)
 }
