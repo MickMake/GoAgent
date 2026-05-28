@@ -62,6 +62,16 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	case "gpt":
+		if err := runGPTCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "skill":
+		if err := runSkillCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
 	case "key":
 		if err := runAPIKeyCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -95,6 +105,8 @@ Usage:
   GoAgent help
   GoAgent serve
   GoAgent setup [server-url] [privacy-url]
+  GoAgent gpt verify
+  GoAgent skill create [name] [output]
   GoAgent key create [name]
   GoAgent key ls
   GoAgent key rm <name>
@@ -110,6 +122,9 @@ Examples:
   GoAgent serve
   GoAgent setup https://example.trycloudflare.com
   GoAgent setup https://example.trycloudflare.com https://example.com/privacy
+  GoAgent gpt verify
+  GoAgent skill create
+  GoAgent skill create local-goagent ./dist
   GoAgent key create
   GoAgent cloudflared update
   GoAgent config set listener.address 127.0.0.1:8080
