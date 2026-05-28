@@ -40,6 +40,12 @@ func Register(mux *http.ServeMux, protect Middleware, initialDefaultLength strin
 }
 
 func quote(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
+		return
+	}
+
 	length := r.URL.Query().Get("length")
 	if length == "" {
 		length = getDefaultLength()
