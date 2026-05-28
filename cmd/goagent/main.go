@@ -49,6 +49,11 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	case "setup":
+		if err := runSetupCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
 	case "key":
 		if err := runAPIKeyCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -64,11 +69,6 @@ func main() {
 			log.Fatal(err)
 		}
 		return
-	case "show":
-		if err := runShowCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
 	default:
 		printHelp()
 		log.Fatalf("unknown command %q", command)
@@ -81,6 +81,7 @@ func printHelp() {
 Usage:
   GoAgent help
   GoAgent serve
+  GoAgent setup [server-url] [privacy-url]
   GoAgent key create [name]
   GoAgent key ls
   GoAgent key rm <name>
@@ -90,13 +91,12 @@ Usage:
   GoAgent config show
   GoAgent config set <section.key> <value>
   GoAgent config reset
-  GoAgent show schema [server-url]
 
 Examples:
   GoAgent serve
+  GoAgent setup https://example.trycloudflare.com https://example.com/privacy
   GoAgent key create
   GoAgent config set listener.address 127.0.0.1:8080
-  GoAgent show schema https://example.trycloudflare.com
   GoAgent config show`)
 }
 
@@ -125,6 +125,8 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", root)
 	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/config/schema", configSchemaHandler(cfg))
+	mux.HandleFunc("/config/knowledge/", knowledgeHandler(apiKey))
 
 	protect := func(next http.HandlerFunc) http.HandlerFunc {
 		return requireAPIKey(apiKey, next)
@@ -234,6 +236,8 @@ func root(w http.ResponseWriter, r *http.Request) {
 		Endpoints: []string{
 			"/",
 			"/health",
+			"/config/schema",
+			"/config/knowledge/{filename}",
 			"/fortune",
 			"/fortune/config",
 			"/shell/{name}",
