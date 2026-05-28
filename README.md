@@ -16,6 +16,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Explicit `cloudflared` cache update command
 - Fortune provider: `/fortune`
 - Configurable shell provider: `/shell/<name>`
+- Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
@@ -121,9 +122,11 @@ Typical layout:
 
 Provider-specific documentation:
 
-- [Shell provider](providers/shell/README.md): configure `/shell/<name>` endpoints, metadata for `GoAgent setup`, query parameters, and chroot examples.
+- [Shell provider](providers/shell/README.md): configure `/shell/<name>` endpoints, optional response prefix, metadata for `GoAgent setup`, query parameters, and chroot examples.
 
 The shell provider is always loaded. Its config file is optional: if `~/.GoAgent/providers/shell/config.json` does not exist, GoAgent writes a small default config. Edit or remove those default endpoints to suit the local machine. As with all cupboards containing local command execution, label the handles clearly before inviting a GPT to open them.
+
+Shell config can include a top-level `prefix` such as `"GoAgent: "`. When present, shell endpoint responses include that value as a `prefix` field, and `GoAgent setup` adds shell-provider instructions telling the GPT to use it in final answers. Remove the field or set it to an empty string to disable the behaviour.
 
 ## CLI commands
 
@@ -177,6 +180,7 @@ Bare hostnames are normalised to `https://` URLs.
 The generated setup text includes:
 
 - GPT name, description, and instructions
+- shell-provider global instructions when present in `~/.GoAgent/providers/shell/config.json`
 - conversation starters based on available providers
 - knowledge file URLs for files in `~/.GoAgent/knowledge/`
 - the configured API key value, or a placeholder if no key exists yet
@@ -341,3 +345,5 @@ GoAgent config set global.shutdown_timeout_seconds 5
   }
 }
 ```
+
+Shell provider response prefixes are configured in `~/.GoAgent/providers/shell/config.json`, not in the main GoAgent config file.
