@@ -17,15 +17,6 @@ const (
 
 type Middleware func(http.HandlerFunc) http.HandlerFunc
 
-type Endpoint struct {
-	Command              string   `json:"command"`
-	Args                 []string `json:"args"`
-	Chroot               string   `json:"chroot,omitempty"`
-	Description          string   `json:"description,omitempty"`
-	Instruction          string   `json:"instruction,omitempty"`
-	ConversationStarters []string `json:"conversation_starters,omitempty"`
-}
-
 type Response struct {
 	Endpoint      string `json:"endpoint,omitempty"`
 	Marker        string `json:"marker,omitempty"`
