@@ -73,10 +73,10 @@ func TestMCPToolsListIncludesShellTools(t *testing.T) {
 
 func TestShellToolNameGeneration(t *testing.T) {
 	cases := map[string]string{
-		"os-version":      "goagent_shell_os_version",
-		"upper":           "goagent_shell_upper",
+		"os-version":       "goagent_shell_os_version",
+		"upper":            "goagent_shell_upper",
 		"/spaces and-Dots": "goagent_shell_spaces_and_dots",
-		"!!!":             "goagent_shell_endpoint",
+		"!!!":              "goagent_shell_endpoint",
 	}
 	for input, want := range cases {
 		if got := shellToolName(input); got != want {
