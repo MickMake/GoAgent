@@ -246,6 +246,23 @@ Verify generated connector artifacts:
 GoAgent connector verify
 ```
 
+Verify the hosted connector URL can be reached remotely:
+
+```bash
+GoAgent connector verify remote
+```
+
+Remote verification checks:
+
+```text
+GET <server-url>/health
+GET <server-url>/config/schema
+GET <server-url>/version
+GET <server-url>/fortune?length=short
+```
+
+The authenticated fortune check uses `GOAGENT_API_KEY` when set, otherwise the configured default API key file. If no API key is available, remote verification reports a warning for protected endpoint auth rather than pretending the cupboard opened itself.
+
 ## Skill artifacts
 
 Generate a reusable ChatGPT Skill package from the current GoAgent setup:
