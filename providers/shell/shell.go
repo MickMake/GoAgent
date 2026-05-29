@@ -84,7 +84,7 @@ func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) er
 			response, err := provider.Run(name, args)
 			if err != nil {
 				status := http.StatusInternalServerError
-				if isMissingParameterError(err) {
+				if IsMissingParameterError(err) {
 					status = http.StatusBadRequest
 				}
 				if response.Endpoint == "" {
@@ -217,7 +217,7 @@ func (e missingParameterError) Error() string {
 	return fmt.Sprintf("missing required parameter %q", e.name)
 }
 
-func isMissingParameterError(err error) bool {
+func IsMissingParameterError(err error) bool {
 	_, ok := err.(missingParameterError)
 	return ok
 }
