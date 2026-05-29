@@ -37,12 +37,12 @@ func loadAPIKey(cfg AppConfig) (string, error) {
 	if err == nil && key != "" {
 		return key, nil
 	}
-	return "", fmt.Errorf("GOAGENT_API_KEY not set and %s not found; run: GoAgent key create", goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
+	return "", fmt.Errorf("GOAGENT_API_KEY not set and %s not found; run: GoAgent gpt key create", goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
 }
 
 func runAPIKeyCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent key create [name] | GoAgent key ls | GoAgent key rm <name>")
+		return errors.New("usage: GoAgent gpt key create [name] | GoAgent gpt key | GoAgent gpt key rm <name>")
 	}
 	switch args[0] {
 	case "create":
@@ -55,7 +55,7 @@ func runAPIKeyCommand(cfg AppConfig, args []string) error {
 		return listSecrets(cfg, "GoAgent-", ".key")
 	case "rm":
 		if len(args) < 2 {
-			return errors.New("usage: GoAgent key rm <name>")
+			return errors.New("usage: GoAgent gpt key rm <name>")
 		}
 		return removeSecret("GoAgent API key", func(name string) string { return goagentAPIKeyPath(cfg, name) }, args[1])
 	default:
