@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -14,68 +15,64 @@ import (
 	"time"
 )
 
-const defaultSkillName = "local-goagent"
+const (
+	defaultSkillDirectoryName = "skill-GoAgent"
+	defaultSkillMetadataName  = "skill-goagent"
+	defaultSkillZipFilename   = "skill-GoAgent.zip"
+	maxSkillZipSizeBytes      = 25 * 1024 * 1024
+)
 
-var nonSkillNameChars = regexp.MustCompile(`[^a-z0-9]+`)
+var skillReferencePattern = regexp.MustCompile(`references/[A-Za-z0-9._/-]+`)
 
 func runSkillCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent skill create [name] [output]")
+		return errors.New("usage: GoAgent skill create|verify")
 	}
 
 	switch args[0] {
 	case "create":
 		return runSkillCreateCommand(cfg, args[1:])
+	case "verify":
+		return runSkillVerifyCommand(args[1:])
 	default:
 		return fmt.Errorf("unknown skill command %q", args[0])
 	}
 }
 
 func runSkillCreateCommand(cfg AppConfig, args []string) error {
-	if len(args) > 2 {
-		return errors.New("usage: GoAgent skill create [name] [output]")
+	if len(args) != 0 {
+		return errors.New("usage: GoAgent skill create")
 	}
 
-	name := defaultSkillName
-	if len(args) >= 1 && strings.TrimSpace(args[0]) != "" {
-		name = args[0]
-	}
-	name = normalizeSkillName(name)
-	if name == "" {
-		return errors.New("skill name must contain at least one letter or digit")
-	}
-
-	output := "skill.zip"
-	if len(args) == 2 && strings.TrimSpace(args[1]) != "" {
-		output = args[1]
-	}
-	if strings.HasSuffix(output, string(os.PathSeparator)) || strings.HasSuffix(output, "/") {
-		output = filepath.Join(output, "skill.zip")
-	}
-	if filepath.Base(output) != "skill.zip" {
-		output = filepath.Join(output, "skill.zip")
-	}
-
-	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil && filepath.Dir(output) != "." {
-		return err
-	}
-
-	bundle, err := buildSkillBundle(cfg, name)
+	bundle, err := buildSkillBundle(cfg, defaultSkillMetadataName)
 	if err != nil {
 		return err
 	}
-	if err := writeSkillZip(output, name, bundle); err != nil {
+	if err := writeSkillZip(defaultSkillZipFilename, defaultSkillDirectoryName, bundle); err != nil {
 		return err
 	}
-	fmt.Printf("created skill package: %s\n", output)
+
+	checks := validateSkillZip(defaultSkillZipFilename)
+	printSkillVerifyReport(checks)
+	if countSkillFailures(checks) > 0 {
+		return fmt.Errorf("created %s but verification failed", defaultSkillZipFilename)
+	}
+
+	fmt.Printf("created verified skill package: %s\n", defaultSkillZipFilename)
 	return nil
 }
 
-func normalizeSkillName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	name = nonSkillNameChars.ReplaceAllString(name, "-")
-	name = strings.Trim(name, "-")
-	return name
+func runSkillVerifyCommand(args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: GoAgent skill verify")
+	}
+
+	checks := validateSkillZip(defaultSkillZipFilename)
+	printSkillVerifyReport(checks)
+	if countSkillFailures(checks) > 0 {
+		return fmt.Errorf("skill verification failed")
+	}
+	return nil
 }
 
 type skillBundle map[string]string
@@ -105,7 +102,7 @@ func buildSkillBundle(cfg AppConfig, skillName string) (skillBundle, error) {
 
 	bundle := skillBundle{}
 	bundle["SKILL.md"] = renderSkillMD(skillName, serverURL, shellCfg, len(knowledgeFiles) > 0)
-	bundle["agents/openai.yaml"] = renderOpenAIMetadata(skillName)
+	bundle["agents/openai.yaml"] = renderOpenAIMetadata()
 	bundle["references/goagent-setup.md"] = setup.String()
 	bundle["references/action-schema.yaml"] = schema.String()
 	bundle["references/action-schema-url.md"] = renderSchemaURL(serverURL, privacyURL, apiKey)
@@ -157,26 +154,13 @@ func renderSkillMD(skillName, serverURL string, shellCfg shellSchemaConfig, hasK
 	return b.String()
 }
 
-func renderOpenAIMetadata(skillName string) string {
-	displayName := strings.ReplaceAll(skillName, "-", " ")
-	words := strings.Fields(displayName)
-	for i, word := range words {
-		if word == "" {
-			continue
-		}
-		words[i] = strings.ToUpper(word[:1]) + word[1:]
-	}
-	if len(words) == 0 {
-		displayName = "Local GoAgent"
-	} else {
-		displayName = strings.Join(words, " ")
-	}
-	return fmt.Sprintf(`interface:
-  display_name: %q
+func renderOpenAIMetadata() string {
+	return `interface:
+  display_name: "Skill GoAgent"
   short_description: "Use a locally running GoAgent service and its configured Action endpoints."
   icon: "terminal"
   color: "#2563eb"
-`, displayName)
+`
 }
 
 func renderSchemaURL(serverURL, privacyURL, apiKey string) string {
@@ -279,7 +263,7 @@ func renderKnowledgeReference(serverURL string, files []string) string {
 	return b.String()
 }
 
-func writeSkillZip(output, skillName string, bundle skillBundle) error {
+func writeSkillZip(output, skillDirectoryName string, bundle skillBundle) error {
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -296,7 +280,7 @@ func writeSkillZip(output, skillName string, bundle skillBundle) error {
 	sort.Strings(paths)
 
 	for _, path := range paths {
-		if err := addSkillZipFile(zipWriter, filepath.ToSlash(filepath.Join(skillName, path)), bundle[path]); err != nil {
+		if err := addSkillZipFile(zipWriter, filepath.ToSlash(filepath.Join(skillDirectoryName, path)), bundle[path]); err != nil {
 			return err
 		}
 	}
@@ -316,4 +300,218 @@ func addSkillZipFile(zipWriter *zip.Writer, name, content string) error {
 	}
 	_, err = io.WriteString(writer, content)
 	return err
+}
+
+func validateSkillZip(filename string) []verifyCheck {
+	checks := []verifyCheck{}
+
+	info, err := os.Stat(filename)
+	if err != nil {
+		return []verifyCheck{{Status: verifyFail, Name: "skill zip exists", Detail: err.Error()}}
+	}
+	if info.Size() == 0 {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "skill zip size", Detail: "file is empty"})
+	} else if info.Size() > maxSkillZipSizeBytes {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "skill zip size", Detail: fmt.Sprintf("%d bytes exceeds 25 MB upload target", info.Size())})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "skill zip size", Detail: fmt.Sprintf("%d bytes", info.Size())})
+	}
+
+	reader, err := zip.OpenReader(filename)
+	if err != nil {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "skill zip opens", Detail: err.Error()})
+		return checks
+	}
+	defer reader.Close()
+	checks = append(checks, verifyCheck{Status: verifyPass, Name: "skill zip opens", Detail: filename})
+
+	fileSet := map[string]bool{}
+	topDirs := map[string]bool{}
+	unsafeEntries := []string{}
+	for _, file := range reader.File {
+		clean := path.Clean(file.Name)
+		if clean == "." || clean == "" || strings.HasPrefix(clean, "../") || clean == ".." || path.IsAbs(clean) || strings.Contains(clean, "\\") {
+			unsafeEntries = append(unsafeEntries, file.Name)
+			continue
+		}
+		fileSet[clean] = true
+		parts := strings.Split(clean, "/")
+		if len(parts) < 2 || parts[0] == "" {
+			unsafeEntries = append(unsafeEntries, file.Name)
+			continue
+		}
+		topDirs[parts[0]] = true
+	}
+	if len(unsafeEntries) > 0 {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "zip paths", Detail: strings.Join(unsafeEntries, ", ")})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "zip paths", Detail: "no absolute, traversal, or top-level loose entries"})
+	}
+
+	if len(topDirs) != 1 || !topDirs[defaultSkillDirectoryName] {
+		dirs := make([]string, 0, len(topDirs))
+		for dir := range topDirs {
+			dirs = append(dirs, dir)
+		}
+		sort.Strings(dirs)
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "top-level skill directory", Detail: fmt.Sprintf("expected %s, found %s", defaultSkillDirectoryName, strings.Join(dirs, ", "))})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "top-level skill directory", Detail: defaultSkillDirectoryName})
+	}
+
+	requiredFiles := []string{
+		defaultSkillDirectoryName + "/SKILL.md",
+		defaultSkillDirectoryName + "/agents/openai.yaml",
+		defaultSkillDirectoryName + "/references/goagent-setup.md",
+		defaultSkillDirectoryName + "/references/action-schema.yaml",
+		defaultSkillDirectoryName + "/references/action-schema-url.md",
+		defaultSkillDirectoryName + "/references/shell-endpoints.md",
+	}
+	missing := []string{}
+	for _, required := range requiredFiles {
+		if !fileSet[required] {
+			missing = append(missing, required)
+		}
+	}
+	if len(missing) > 0 {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "required files", Detail: strings.Join(missing, ", ")})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "required files", Detail: fmt.Sprintf("%d present", len(requiredFiles))})
+	}
+
+	skillMD, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/SKILL.md")
+	if err != nil {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md read", Detail: err.Error()})
+	} else if !ok {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md read", Detail: "missing"})
+	} else {
+		checks = append(checks, validateSkillMD(skillMD, fileSet)...)
+	}
+
+	metadata, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/agents/openai.yaml")
+	if err != nil {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "agents/openai.yaml read", Detail: err.Error()})
+	} else if !ok {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "agents/openai.yaml read", Detail: "missing"})
+	} else if strings.Contains(metadata, "display_name:") && strings.Contains(metadata, "Skill GoAgent") {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "agents/openai.yaml metadata", Detail: "display name present"})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "agents/openai.yaml metadata", Detail: "missing expected display_name"})
+	}
+
+	schema, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/references/action-schema.yaml")
+	if err != nil {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "action schema read", Detail: err.Error()})
+	} else if !ok {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "action schema read", Detail: "missing"})
+	} else {
+		checks = append(checks, validateSkillActionSchema(schema)...)
+	}
+
+	return checks
+}
+
+func validateSkillMD(skillMD string, fileSet map[string]bool) []verifyCheck {
+	checks := []verifyCheck{}
+	if !strings.HasPrefix(skillMD, "---\n") || !strings.Contains(skillMD[4:], "\n---\n") {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md frontmatter", Detail: "missing YAML frontmatter"})
+	} else if strings.Contains(skillMD, "\nname: "+defaultSkillMetadataName+"\n") && strings.Contains(skillMD, "\ndescription: ") {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "SKILL.md frontmatter", Detail: "name and description present"})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md frontmatter", Detail: "expected name: " + defaultSkillMetadataName})
+	}
+
+	if strings.Count(skillMD, "\n") > 500 {
+		checks = append(checks, verifyCheck{Status: verifyWarn, Name: "SKILL.md length", Detail: "over 500 lines"})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "SKILL.md length", Detail: fmt.Sprintf("%d lines", strings.Count(skillMD, "\n")+1)})
+	}
+
+	missingReferences := []string{}
+	seen := map[string]bool{}
+	for _, reference := range skillReferencePattern.FindAllString(skillMD, -1) {
+		fullPath := defaultSkillDirectoryName + "/" + reference
+		if seen[fullPath] {
+			continue
+		}
+		seen[fullPath] = true
+		if !fileSet[fullPath] {
+			missingReferences = append(missingReferences, reference)
+		}
+	}
+	if len(missingReferences) > 0 {
+		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md references", Detail: strings.Join(missingReferences, ", ")})
+	} else {
+		checks = append(checks, verifyCheck{Status: verifyPass, Name: "SKILL.md references", Detail: fmt.Sprintf("%d linked reference(s) exist", len(seen))})
+	}
+	return checks
+}
+
+func validateSkillActionSchema(schema string) []verifyCheck {
+	missing := []string{}
+	for _, operationID := range []string{"getGoAgentHealth", "getGoAgentVersion", "getFortune"} {
+		if !strings.Contains(schema, "operationId: "+operationID) {
+			missing = append(missing, operationID)
+		}
+	}
+	if !strings.Contains(schema, "ApiKeyAuth") {
+		missing = append(missing, "ApiKeyAuth")
+	}
+	if len(missing) > 0 {
+		return []verifyCheck{{Status: verifyFail, Name: "action schema sanity", Detail: strings.Join(missing, ", ")}}
+	}
+	return []verifyCheck{{Status: verifyPass, Name: "action schema sanity", Detail: "core operations and API key auth present"}}
+}
+
+func readZipTextFile(reader *zip.ReadCloser, name string) (string, bool, error) {
+	for _, file := range reader.File {
+		if path.Clean(file.Name) != name {
+			continue
+		}
+		readCloser, err := file.Open()
+		if err != nil {
+			return "", true, err
+		}
+		defer readCloser.Close()
+		contents, err := io.ReadAll(readCloser)
+		if err != nil {
+			return "", true, err
+		}
+		return string(contents), true, nil
+	}
+	return "", false, nil
+}
+
+func printSkillVerifyReport(checks []verifyCheck) {
+	failures := countSkillFailures(checks)
+	warnings := 0
+	passed := 0
+
+	fmt.Println("GoAgent skill verify")
+	fmt.Println()
+	for _, check := range checks {
+		fmt.Printf("[%s] %s", check.Status, check.Name)
+		if check.Detail != "" {
+			fmt.Printf(" - %s", check.Detail)
+		}
+		fmt.Println()
+		switch check.Status {
+		case verifyWarn:
+			warnings++
+		case verifyPass:
+			passed++
+		}
+	}
+	fmt.Println()
+	fmt.Printf("Summary: %d failed, %d warning(s), %d passed\n", failures, warnings, passed)
+}
+
+func countSkillFailures(checks []verifyCheck) int {
+	failures := 0
+	for _, check := range checks {
+		if check.Status == verifyFail {
+			failures++
+		}
+	}
+	return failures
 }
