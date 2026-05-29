@@ -463,6 +463,17 @@ Knowledge file URLs require the configured `X-API-Key` header.
 
 ## GoAgent config
 
+Scoped config commands print the effective subsystem view, assembled from the shared config keys that subsystem uses:
+
+```bash
+GoAgent gpt config
+GoAgent mcp config
+GoAgent skill config
+```
+
+`GoAgent config` still prints the raw complete config.
+
+
 Show current config:
 
 ```bash

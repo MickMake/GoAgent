@@ -215,23 +215,101 @@ func printConfig(cfg AppConfig) error {
 
 func printConfigSection(cfg AppConfig, section string) error {
 	cfg = normalizeConfig(cfg)
-	var value any
+
+	var (
+		value any
+		err   error
+	)
 	switch section {
 	case "gpt":
-		value = cfg.GPT
+		value = effectiveGPTConfig(cfg)
 	case "mcp":
-		value = cfg.Serve
+		value, err = effectiveMCPConfig(cfg)
 	case "skill":
-		value = map[string]string{"artifact_dir": filepath.Join(cfg.Global.ArtifactDir, "skill")}
+		value = effectiveSkillConfig(cfg)
 	default:
 		return fmt.Errorf("unknown config section %q", section)
 	}
+	if err != nil {
+		return err
+	}
+
 	contents, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	fmt.Println(string(contents))
 	return nil
+}
+
+func effectiveGPTConfig(cfg AppConfig) map[string]any {
+	return map[string]any{
+		"enabled":     cfg.Serve.GPTEnabled,
+		"server_url":  cfg.GPT.ServerURL,
+		"privacy_url": cfg.GPT.PrivacyURL,
+		"listener": map[string]any{
+			"address":              cfg.Listener.ListenAddr,
+			"default_api_key":      cfg.Listener.DefaultAPIKey,
+			"default_quote_length": cfg.Listener.DefaultQuoteLength,
+		},
+		"cloudflare": map[string]any{
+			"enabled":       cfg.Cloudflare.Enabled,
+			"mode":          cfg.Cloudflare.Mode,
+			"default_token": cfg.Cloudflare.DefaultToken,
+			"log_level":     cfg.Cloudflare.LogLevel,
+			"version":       cfg.Cloudflare.Version,
+		},
+		"artifacts": map[string]any{
+			"setup":         artifactPath(cfg, "gpt", "setup.md"),
+			"action_schema": artifactPath(cfg, "gpt", "action-schema.yaml"),
+		},
+		"providers": map[string]any{
+			"base_dir": cfg.Global.ProviderBaseDir,
+		},
+	}
+}
+
+func effectiveMCPConfig(cfg AppConfig) (map[string]any, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	exe, err = filepath.Abs(exe)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"enabled": cfg.Serve.MCPEnabled,
+		"server": map[string]any{
+			"transport": "stdio",
+			"command":   exe,
+			"args":      []string{"serve", "mcp"},
+		},
+		"artifacts": map[string]any{
+			"client_config":          artifactPath(cfg, "mcp", "client-config.json"),
+			"client_config_markdown": artifactPath(cfg, "mcp", "client-config.md"),
+		},
+		"providers": map[string]any{
+			"base_dir": cfg.Global.ProviderBaseDir,
+		},
+	}, nil
+}
+
+func effectiveSkillConfig(cfg AppConfig) map[string]any {
+	return map[string]any{
+		"artifacts": map[string]any{
+			"directory": filepath.Join(cfg.Global.ArtifactDir, "skill", defaultSkillDirectoryName),
+			"zip":       filepath.Join(cfg.Global.ArtifactDir, "skill", defaultSkillZipFilename),
+		},
+		"gpt_references": map[string]any{
+			"setup":         artifactPath(cfg, "gpt", "setup.md"),
+			"action_schema": artifactPath(cfg, "gpt", "action-schema.yaml"),
+		},
+		"providers": map[string]any{
+			"base_dir": cfg.Global.ProviderBaseDir,
+		},
+	}
 }
 
 func runConfigSet(cfg AppConfig, key, value string) error {
