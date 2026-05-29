@@ -182,8 +182,8 @@ func TestMCPCallDynamicShellToolMissingParam(t *testing.T) {
 	if rpcErr == nil {
 		t.Fatal("expected missing parameter error")
 	}
-	if rpcErr.Code != -32000 {
-		t.Fatalf("error code = %d, want -32000", rpcErr.Code)
+	if rpcErr.Code != -32602 {
+		t.Fatalf("error code = %d, want -32602", rpcErr.Code)
 	}
 }
 
