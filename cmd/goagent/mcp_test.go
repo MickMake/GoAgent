@@ -3,15 +3,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MickMake/GoAgent/providers/fortune"
+	"github.com/MickMake/GoAgent/providers/shell"
 )
 
-func TestMCPToolsListIncludesPhaseOneTools(t *testing.T) {
-	server := newMCPServer(defaultConfig())
-	tools := server.tools()
+func TestMCPToolsListIncludesCoreTools(t *testing.T) {
+	server := testMCPServerWithoutShell()
+	tools, rpcErr := server.tools()
+	if rpcErr != nil {
+		t.Fatalf("tools returned error: %+v", rpcErr)
+	}
 
 	got := make([]string, 0, len(tools))
 	for _, tool := range tools {
@@ -28,8 +34,76 @@ func TestMCPToolsListIncludesPhaseOneTools(t *testing.T) {
 	}
 }
 
+func TestMCPToolsListIncludesShellTools(t *testing.T) {
+	server := testMCPServerWithShellProvider(&shell.Provider{Config: shell.Config{Endpoints: map[string]shell.Endpoint{
+		"os-version": {
+			Args:        []string{"-v"},
+			Description: "Return OS version.",
+		},
+		"upper": {
+			Args:        []string{"$text"},
+			Description: "Uppercase text.",
+		},
+	}}})
+
+	tools, rpcErr := server.tools()
+	if rpcErr != nil {
+		t.Fatalf("tools returned error: %+v", rpcErr)
+	}
+
+	byName := map[string]mcpTool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	if _, ok := byName["goagent_shell_os_version"]; !ok {
+		t.Fatalf("missing shell tool goagent_shell_os_version; tools=%v", toolNames(tools))
+	}
+	upper, ok := byName["goagent_shell_upper"]
+	if !ok {
+		t.Fatalf("missing shell tool goagent_shell_upper; tools=%v", toolNames(tools))
+	}
+	if upper.Description != "Uppercase text." {
+		t.Fatalf("description = %q", upper.Description)
+	}
+	required, ok := upper.InputSchema["required"].([]string)
+	if !ok || len(required) != 1 || required[0] != "text" {
+		t.Fatalf("required schema = %#v", upper.InputSchema["required"])
+	}
+}
+
+func TestShellToolNameGeneration(t *testing.T) {
+	cases := map[string]string{
+		"os-version":      "goagent_shell_os_version",
+		"upper":           "goagent_shell_upper",
+		"/spaces and-Dots": "goagent_shell_spaces_and_dots",
+		"!!!":             "goagent_shell_endpoint",
+	}
+	for input, want := range cases {
+		if got := shellToolName(input); got != want {
+			t.Fatalf("shellToolName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestShellInputSchemaFromParams(t *testing.T) {
+	schema := shellInputSchema([]string{"$text", "literal", "$name", "$text"})
+	required, ok := schema["required"].([]string)
+	if !ok {
+		t.Fatalf("required has type %T", schema["required"])
+	}
+	want := []string{"name", "text"}
+	if len(required) != len(want) {
+		t.Fatalf("required = %#v", required)
+	}
+	for i := range want {
+		if required[i] != want[i] {
+			t.Fatalf("required[%d] = %q, want %q", i, required[i], want[i])
+		}
+	}
+}
+
 func TestMCPCallHealth(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	result, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_health"}`))
 	if rpcErr != nil {
 		t.Fatalf("callTool returned error: %+v", rpcErr)
@@ -40,7 +114,7 @@ func TestMCPCallHealth(t *testing.T) {
 }
 
 func TestMCPCallVersion(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	result, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_version"}`))
 	if rpcErr != nil {
 		t.Fatalf("callTool returned error: %+v", rpcErr)
@@ -51,7 +125,7 @@ func TestMCPCallVersion(t *testing.T) {
 }
 
 func TestMCPCallFortune(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	server.quote = func(length string) (fortune.Response, error) {
 		if length != "long" {
 			t.Fatalf("length = %q, want long", length)
@@ -68,8 +142,53 @@ func TestMCPCallFortune(t *testing.T) {
 	}
 }
 
+func TestMCPCallDynamicShellTool(t *testing.T) {
+	providerBaseDir := t.TempDir()
+	binPath := writeExecutable(t, providerBaseDir, "echo-arg", "#!/bin/sh\nprintf '%s' \"$1\"\n")
+	writeShellConfig(t, providerBaseDir, map[string]shell.Endpoint{
+		"echo-text": {
+			Command:     binPath,
+			Args:        []string{"$text"},
+			Description: "Echo supplied text.",
+		},
+	})
+	cfg := defaultConfig()
+	cfg.Global.ProviderBaseDir = providerBaseDir
+	server := newMCPServer(cfg)
+
+	result, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_shell_echo_text","arguments":{"text":"hello goblin"}}`))
+	if rpcErr != nil {
+		t.Fatalf("callTool returned error: %+v", rpcErr)
+	}
+	if got := firstToolText(t, result); got != "hello goblin" {
+		t.Fatalf("shell text = %q", got)
+	}
+}
+
+func TestMCPCallDynamicShellToolMissingParam(t *testing.T) {
+	providerBaseDir := t.TempDir()
+	binPath := writeExecutable(t, providerBaseDir, "echo-arg", "#!/bin/sh\nprintf '%s' \"$1\"\n")
+	writeShellConfig(t, providerBaseDir, map[string]shell.Endpoint{
+		"echo-text": {
+			Command: binPath,
+			Args:    []string{"$text"},
+		},
+	})
+	cfg := defaultConfig()
+	cfg.Global.ProviderBaseDir = providerBaseDir
+	server := newMCPServer(cfg)
+
+	_, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_shell_echo_text","arguments":{}}`))
+	if rpcErr == nil {
+		t.Fatal("expected missing parameter error")
+	}
+	if rpcErr.Code != -32000 {
+		t.Fatalf("error code = %d, want -32000", rpcErr.Code)
+	}
+}
+
 func TestMCPUnknownTool(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	_, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_missing"}`))
 	if rpcErr == nil {
 		t.Fatal("expected error for unknown tool")
@@ -80,7 +199,7 @@ func TestMCPUnknownTool(t *testing.T) {
 }
 
 func TestMCPFortuneRejectsBadLength(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	_, rpcErr := server.callTool(json.RawMessage(`{"name":"goagent_fortune","arguments":{"length":"medium"}}`))
 	if rpcErr == nil {
 		t.Fatal("expected error for invalid length")
@@ -91,7 +210,7 @@ func TestMCPFortuneRejectsBadLength(t *testing.T) {
 }
 
 func TestMCPServeLineDelimitedJSON(t *testing.T) {
-	server := newMCPServer(defaultConfig())
+	server := testMCPServerWithoutShell()
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
@@ -118,6 +237,22 @@ func TestMCPServeLineDelimitedJSON(t *testing.T) {
 	}
 }
 
+func testMCPServerWithoutShell() *mcpServer {
+	server := newMCPServer(defaultConfig())
+	server.shellProvider = func() (*shell.Provider, error) {
+		return &shell.Provider{Config: shell.Config{Endpoints: map[string]shell.Endpoint{}}}, nil
+	}
+	return server
+}
+
+func testMCPServerWithShellProvider(provider *shell.Provider) *mcpServer {
+	server := newMCPServer(defaultConfig())
+	server.shellProvider = func() (*shell.Provider, error) {
+		return provider, nil
+	}
+	return server
+}
+
 func firstToolText(t *testing.T, result map[string]any) string {
 	t.Helper()
 	content, ok := result["content"].([]mcpTextContent)
@@ -128,4 +263,36 @@ func firstToolText(t *testing.T, result map[string]any) string {
 		t.Fatal("content is empty")
 	}
 	return content[0].Text
+}
+
+func toolNames(tools []mcpTool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func writeExecutable(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+	return path
+}
+
+func writeShellConfig(t *testing.T, providerBaseDir string, endpoints map[string]shell.Endpoint) {
+	t.Helper()
+	path := filepath.Join(providerBaseDir, "shell", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir shell config: %v", err)
+	}
+	contents, err := json.MarshalIndent(shell.Config{Endpoints: endpoints}, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal shell config: %v", err)
+	}
+	if err := os.WriteFile(path, append(contents, '\n'), 0o600); err != nil {
+		t.Fatalf("write shell config: %v", err)
+	}
 }
