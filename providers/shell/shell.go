@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -27,6 +28,11 @@ type Config struct {
 	Endpoints    map[string]Endpoint `json:"endpoints"`
 }
 
+type Provider struct {
+	Config Config
+	prefix string
+}
+
 type Response struct {
 	Prefix   string   `json:"prefix,omitempty"`
 	Endpoint string   `json:"endpoint,omitempty"`
@@ -37,83 +43,196 @@ type Response struct {
 	Error    string   `json:"error,omitempty"`
 }
 
-func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) error {
+func New(providerBaseDir string) (*Provider, error) {
 	cfg, err := loadConfig(providerBaseDir)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{
+		Config: cfg,
+		prefix: normalizePrefix(cfg.Prefix),
+	}, nil
+}
+
+func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) error {
+	provider, err := New(providerBaseDir)
 	if err != nil {
 		return err
 	}
-	prefix := strings.TrimSpace(cfg.Prefix)
-	if prefix != "" && !strings.HasSuffix(prefix, " ") {
-		prefix += " "
-	}
 
-	for endpointName, endpoint := range cfg.Endpoints {
-		ep := endpoint
-		name := strings.Trim(endpointName, "/")
+	for _, endpointName := range provider.EndpointNames() {
+		name := endpointName
 		path := "/shell/" + name
-
-		command, chroot, err := validateEndpoint(ep)
-		if err != nil {
-			return fmt.Errorf("invalid shell endpoint %q: %w", endpointName, err)
+		if _, _, err := validateEndpoint(provider.Config.Endpoints[name]); err != nil {
+			return fmt.Errorf("invalid shell endpoint %q: %w", name, err)
 		}
 
 		mux.HandleFunc(path, protect(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				w.Header().Set("Allow", "GET")
-				writeJSON(w, http.StatusMethodNotAllowed, withPrefix(prefix, Response{Endpoint: path, Error: "method not allowed"}))
+				writeJSON(w, http.StatusMethodNotAllowed, provider.withPrefix(Response{Endpoint: path, Error: "method not allowed"}))
 				return
 			}
 
-			resolvedArgs, err := resolveArgs(ep.Args, r)
+			args := map[string]string{}
+			for key, values := range r.URL.Query() {
+				if len(values) > 0 {
+					args[key] = values[0]
+				}
+			}
+
+			response, err := provider.Run(name, args)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, withPrefix(prefix, Response{
-					Endpoint: path,
-					Error:    err.Error(),
-				}))
+				status := http.StatusInternalServerError
+				if isMissingParameterError(err) {
+					status = http.StatusBadRequest
+				}
+				if response.Endpoint == "" {
+					response.Endpoint = path
+				}
+				response.Error = err.Error()
+				writeJSON(w, status, response)
 				return
 			}
 
-			cmd := exec.Command(command, resolvedArgs...)
-			if err := applyChroot(cmd, chroot); err != nil {
-				writeJSON(w, http.StatusInternalServerError, withPrefix(prefix, Response{
-					Endpoint: path,
-					Command:  command,
-					Args:     resolvedArgs,
-					Chroot:   chroot,
-					Error:    err.Error(),
-				}))
-				return
-			}
-
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, withPrefix(prefix, Response{
-					Endpoint: path,
-					Command:  command,
-					Args:     resolvedArgs,
-					Chroot:   chroot,
-					Error:    err.Error(),
-					Output:   strings.TrimSpace(string(out)),
-				}))
-				return
-			}
-
-			writeJSON(w, http.StatusOK, withPrefix(prefix, Response{
-				Endpoint: path,
-				Command:  command,
-				Args:     resolvedArgs,
-				Chroot:   chroot,
-				Output:   strings.TrimSpace(string(out)),
-			}))
+			writeJSON(w, http.StatusOK, response)
 		}))
 	}
 
 	return nil
 }
 
-func withPrefix(prefix string, response Response) Response {
-	if prefix != "" {
-		response.Prefix = prefix
+func (p *Provider) EndpointNames() []string {
+	if p == nil || len(p.Config.Endpoints) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(p.Config.Endpoints))
+	for name := range p.Config.Endpoints {
+		trimmed := strings.Trim(name, "/")
+		if trimmed != "" {
+			names = append(names, trimmed)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (p *Provider) Endpoint(name string) (Endpoint, bool) {
+	if p == nil {
+		return Endpoint{}, false
+	}
+	name = strings.Trim(name, "/")
+	endpoint, ok := p.Config.Endpoints[name]
+	if ok {
+		return endpoint, true
+	}
+	endpoint, ok = p.Config.Endpoints["/"+name]
+	return endpoint, ok
+}
+
+func (p *Provider) Run(name string, input map[string]string) (Response, error) {
+	name = strings.Trim(name, "/")
+	path := "/shell/" + name
+	endpoint, ok := p.Endpoint(name)
+	if !ok {
+		return p.withPrefix(Response{Endpoint: path}), fmt.Errorf("unknown shell endpoint %q", name)
+	}
+
+	command, chroot, err := validateEndpoint(endpoint)
+	if err != nil {
+		return p.withPrefix(Response{Endpoint: path}), err
+	}
+
+	resolvedArgs, err := ResolveArgs(endpoint.Args, input)
+	if err != nil {
+		return p.withPrefix(Response{Endpoint: path}), err
+	}
+
+	cmd := exec.Command(command, resolvedArgs...)
+	if err := applyChroot(cmd, chroot); err != nil {
+		return p.withPrefix(Response{
+			Endpoint: path,
+			Command:  command,
+			Args:     resolvedArgs,
+			Chroot:   chroot,
+		}), err
+	}
+
+	out, err := cmd.CombinedOutput()
+	response := p.withPrefix(Response{
+		Endpoint: path,
+		Command:  command,
+		Args:     resolvedArgs,
+		Chroot:   chroot,
+		Output:   strings.TrimSpace(string(out)),
+	})
+	if err != nil {
+		return response, err
+	}
+	return response, nil
+}
+
+func Params(configuredArgs []string) []string {
+	seen := map[string]bool{}
+	params := []string{}
+	for _, arg := range configuredArgs {
+		if !strings.HasPrefix(arg, "$") || len(arg) == 1 {
+			continue
+		}
+		name := strings.TrimPrefix(arg, "$")
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		params = append(params, name)
+	}
+	sort.Strings(params)
+	return params
+}
+
+func ResolveArgs(configuredArgs []string, values map[string]string) ([]string, error) {
+	resolved := make([]string, 0, len(configuredArgs))
+	for _, arg := range configuredArgs {
+		if !strings.HasPrefix(arg, "$") || len(arg) == 1 {
+			resolved = append(resolved, arg)
+			continue
+		}
+
+		name := strings.TrimPrefix(arg, "$")
+		value := strings.TrimSpace(values[name])
+		if value == "" {
+			return nil, missingParameterError{name: name}
+		}
+
+		resolved = append(resolved, value)
+	}
+	return resolved, nil
+}
+
+type missingParameterError struct {
+	name string
+}
+
+func (e missingParameterError) Error() string {
+	return fmt.Sprintf("missing required parameter %q", e.name)
+}
+
+func isMissingParameterError(err error) bool {
+	_, ok := err.(missingParameterError)
+	return ok
+}
+
+func normalizePrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix != "" && !strings.HasSuffix(prefix, " ") {
+		prefix += " "
+	}
+	return prefix
+}
+
+func (p *Provider) withPrefix(response Response) Response {
+	if p != nil && p.prefix != "" {
+		response.Prefix = p.prefix
 	}
 	return response
 }
@@ -134,28 +253,6 @@ func validateEndpoint(endpoint Endpoint) (string, string, error) {
 	}
 
 	return filepath.Clean(command), chroot, nil
-}
-
-func resolveArgs(configuredArgs []string, r *http.Request) ([]string, error) {
-	resolved := make([]string, 0, len(configuredArgs))
-	query := r.URL.Query()
-
-	for _, arg := range configuredArgs {
-		if !strings.HasPrefix(arg, "$") || len(arg) == 1 {
-			resolved = append(resolved, arg)
-			continue
-		}
-
-		name := strings.TrimPrefix(arg, "$")
-		value := query.Get(name)
-		if value == "" {
-			return nil, fmt.Errorf("missing required query parameter %q", name)
-		}
-
-		resolved = append(resolved, value)
-	}
-
-	return resolved, nil
 }
 
 func loadConfig(providerBaseDir string) (Config, error) {
