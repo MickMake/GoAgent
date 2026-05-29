@@ -119,6 +119,7 @@ Usage:
 
   GoAgent connector create
   GoAgent connector verify
+  GoAgent connector verify remote
   GoAgent connector config
   GoAgent connector config set <key> <value>
   GoAgent connector config reset <key>
@@ -144,6 +145,7 @@ Examples:
   GoAgent gpt cloudflared update
   GoAgent mcp create
   GoAgent connector create
+  GoAgent connector verify remote
   GoAgent skill create
   GoAgent config set global.artifact_dir ~/.GoAgent/artifacts
   GoAgent config set serve.mcp_enabled true
