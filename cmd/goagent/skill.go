@@ -379,7 +379,7 @@ func validateSkillZip(filename string) []verifyCheck {
 		checks = append(checks, verifyCheck{Status: verifyPass, Name: "required files", Detail: fmt.Sprintf("%d present", len(requiredFiles))})
 	}
 
-	skillMD, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/SKILL.md")
+	skillMD, ok, err := readZipTextFile(reader, defaultSkillDirectoryName+"/SKILL.md")
 	if err != nil {
 		checks = append(checks, verifyCheck{Status: verifyFail, Name: "SKILL.md read", Detail: err.Error()})
 	} else if !ok {
@@ -388,7 +388,7 @@ func validateSkillZip(filename string) []verifyCheck {
 		checks = append(checks, validateSkillMD(skillMD, fileSet)...)
 	}
 
-	metadata, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/agents/openai.yaml")
+	metadata, ok, err := readZipTextFile(reader, defaultSkillDirectoryName+"/agents/openai.yaml")
 	if err != nil {
 		checks = append(checks, verifyCheck{Status: verifyFail, Name: "agents/openai.yaml read", Detail: err.Error()})
 	} else if !ok {
@@ -399,7 +399,7 @@ func validateSkillZip(filename string) []verifyCheck {
 		checks = append(checks, verifyCheck{Status: verifyFail, Name: "agents/openai.yaml metadata", Detail: "missing expected display_name"})
 	}
 
-	schema, ok, err := readZipTextFile(&reader, defaultSkillDirectoryName+"/references/action-schema.yaml")
+	schema, ok, err := readZipTextFile(reader, defaultSkillDirectoryName+"/references/action-schema.yaml")
 	if err != nil {
 		checks = append(checks, verifyCheck{Status: verifyFail, Name: "action schema read", Detail: err.Error()})
 	} else if !ok {
