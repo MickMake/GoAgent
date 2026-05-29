@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 const (
@@ -47,11 +44,8 @@ func runConnectorCommand(cfg AppConfig, args []string) error {
 		}
 		return runConnectorCreateCommand(cfg)
 	case "verify":
-		if len(args) == 2 && args[1] == "remote" {
-			return runConnectorRemoteVerifyCommand(cfg)
-		}
 		if len(args) != 1 {
-			return errors.New("usage: GoAgent connector verify [remote]")
+			return errors.New("usage: GoAgent connector verify")
 		}
 		return runConnectorVerifyCommand(cfg)
 	case "config":
@@ -135,99 +129,6 @@ func runConnectorVerifyCommand(cfg AppConfig) error {
 		return errors.New("connector verification failed")
 	}
 	return nil
-}
-
-func runConnectorRemoteVerifyCommand(cfg AppConfig) error {
-	cfg = normalizeConfig(cfg)
-	serverURL := defaultSetupServerURL(cfg)
-	if err := validateSetupURL("server URL", serverURL, true); err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	apiKey, keyErr := connectorAPIKey(cfg)
-	checks := []verifyCheck{}
-
-	if body, err := connectorRemoteGET(client, connectorURL(serverURL, "/health"), ""); err != nil {
-		checks = append(checks, verifyCheck{Status: verifyFail, Name: "remote /health", Detail: err.Error()})
-	} else if !strings.Contains(body, "ok") {
-		checks = append(checks, verifyCheck{Status: verifyWarn, Name: "remote /health response", Detail: "response did not contain ok"})
-	} else {
-		checks = append(checks, verifyCheck{Status: verifyPass, Name: "remote /health", Detail: connectorURL(serverURL, "/health")})
-	}
-
-	if body, err := connectorRemoteGET(client, connectorSchemaURL(serverURL), ""); err != nil {
-		checks = append(checks, verifyCheck{Status: verifyFail, Name: "remote /config/schema", Detail: err.Error()})
-	} else if !strings.Contains(body, "openapi: 3.1.0") || !strings.Contains(body, connectorAuthHeader) {
-		checks = append(checks, verifyCheck{Status: verifyFail, Name: "remote schema sanity", Detail: "expected OpenAPI 3.1 schema with X-API-Key auth"})
-	} else {
-		checks = append(checks, verifyCheck{Status: verifyPass, Name: "remote /config/schema", Detail: connectorSchemaURL(serverURL)})
-	}
-
-	if body, err := connectorRemoteGET(client, connectorURL(serverURL, "/version"), apiKey); err != nil {
-		checks = append(checks, verifyCheck{Status: verifyFail, Name: "remote /version", Detail: err.Error()})
-	} else if !strings.Contains(body, "GoAgent") {
-		checks = append(checks, verifyCheck{Status: verifyWarn, Name: "remote /version response", Detail: "response did not contain GoAgent"})
-	} else {
-		checks = append(checks, verifyCheck{Status: verifyPass, Name: "remote /version", Detail: connectorURL(serverURL, "/version")})
-	}
-
-	if keyErr != nil || apiKey == "" {
-		detail := "run GoAgent gpt key create or set GOAGENT_API_KEY to verify protected calls"
-		if keyErr != nil {
-			detail = keyErr.Error()
-		}
-		checks = append(checks, verifyCheck{Status: verifyWarn, Name: "remote protected endpoint auth", Detail: detail})
-	} else if _, err := connectorRemoteGET(client, connectorURL(serverURL, "/fortune?length=short"), apiKey); err != nil {
-		checks = append(checks, verifyCheck{Status: verifyFail, Name: "remote /fortune authenticated", Detail: err.Error()})
-	} else {
-		checks = append(checks, verifyCheck{Status: verifyPass, Name: "remote /fortune authenticated", Detail: connectorURL(serverURL, "/fortune?length=short")})
-	}
-
-	printVerifyReport("GoAgent connector remote verify", checks)
-	if countVerifyFailures(checks) > 0 {
-		return errors.New("connector remote verification failed")
-	}
-	return nil
-}
-
-func connectorAPIKey(cfg AppConfig) (string, error) {
-	if envKey := strings.TrimSpace(os.Getenv("GOAGENT_API_KEY")); envKey != "" {
-		return envKey, nil
-	}
-	key, err := readNamedSecret(goagentAPIKeyPath(cfg, cfg.Listener.DefaultAPIKey))
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(key) == "" {
-		return "", errors.New("configured API key is empty")
-	}
-	return key, nil
-}
-
-func connectorRemoteGET(client *http.Client, rawURL string, apiKey string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	if apiKey != "" {
-		req.Header.Set(connectorAuthHeader, apiKey)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return string(body), fmt.Errorf("GET %s returned %s", rawURL, resp.Status)
-	}
-	return string(body), nil
 }
 
 func runConnectorConfigCommand(cfg AppConfig, args []string) error {
@@ -317,11 +218,7 @@ func newConnectorManifest(cfg AppConfig, serverURL string) connectorManifest {
 }
 
 func connectorSchemaURL(serverURL string) string {
-	return connectorURL(serverURL, "/config/schema")
-}
-
-func connectorURL(serverURL, path string) string {
-	return strings.TrimRight(serverURL, "/") + path
+	return strings.TrimRight(serverURL, "/") + "/config/schema"
 }
 
 func writeConnectorGuide(out *bytes.Buffer, manifest connectorManifest) {
