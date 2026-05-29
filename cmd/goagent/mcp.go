@@ -7,17 +7,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/MickMake/GoAgent/providers/fortune"
+	"github.com/MickMake/GoAgent/providers/shell"
 )
 
 const mcpProtocolVersion = "2025-06-18"
 
 type mcpServer struct {
-	cfg   AppConfig
-	quote func(length string) (fortune.Response, error)
+	cfg           AppConfig
+	quote         func(length string) (fortune.Response, error)
+	shellProvider func() (*shell.Provider, error)
 }
 
 type jsonRPCRequest struct {
@@ -65,6 +68,9 @@ func newMCPServer(cfg AppConfig) *mcpServer {
 	return &mcpServer{
 		cfg:   cfg,
 		quote: fortune.Quote,
+		shellProvider: func() (*shell.Provider, error) {
+			return shell.New(cfg.Global.ProviderBaseDir)
+		},
 	}
 }
 
@@ -113,7 +119,12 @@ func (s *mcpServer) handle(req jsonRPCRequest) (jsonRPCResponse, bool) {
 	case "initialize":
 		return s.initializeResponse(base, req), true
 	case "tools/list":
-		base.Result = map[string]any{"tools": s.tools()}
+		tools, rpcErr := s.tools()
+		if rpcErr != nil {
+			base.Error = rpcErr
+		} else {
+			base.Result = map[string]any{"tools": tools}
+		}
 		return base, true
 	case "tools/call":
 		result, rpcErr := s.callTool(req.Params)
@@ -150,7 +161,7 @@ func (s *mcpServer) initializeResponse(base jsonRPCResponse, req jsonRPCRequest)
 	return base
 }
 
-func (s *mcpServer) tools() []mcpTool {
+func (s *mcpServer) tools() ([]mcpTool, *jsonRPCError) {
 	tools := []mcpTool{
 		{
 			Name:        "goagent_health",
@@ -177,8 +188,46 @@ func (s *mcpServer) tools() []mcpTool {
 			},
 		},
 	}
+
+	shellTools, rpcErr := s.shellTools()
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	tools = append(tools, shellTools...)
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools
+	return tools, nil
+}
+
+func (s *mcpServer) shellTools() ([]mcpTool, *jsonRPCError) {
+	provider, err := s.shellProvider()
+	if err != nil {
+		return nil, &jsonRPCError{Code: -32000, Message: "shell provider failed", Data: err.Error()}
+	}
+
+	toolNames := map[string]bool{}
+	tools := []mcpTool{}
+	for _, endpointName := range provider.EndpointNames() {
+		endpoint, ok := provider.Endpoint(endpointName)
+		if !ok {
+			continue
+		}
+		toolName := shellToolName(endpointName)
+		if toolNames[toolName] {
+			return nil, &jsonRPCError{Code: -32000, Message: "duplicate shell MCP tool name", Data: toolName}
+		}
+		toolNames[toolName] = true
+
+		description := strings.TrimSpace(endpoint.Description)
+		if description == "" {
+			description = "Run configured GoAgent shell endpoint " + endpointName + "."
+		}
+		tools = append(tools, mcpTool{
+			Name:        toolName,
+			Description: description,
+			InputSchema: shellInputSchema(endpoint.Args),
+		})
+	}
+	return tools, nil
 }
 
 func (s *mcpServer) callTool(rawParams json.RawMessage) (map[string]any, *jsonRPCError) {
@@ -216,8 +265,91 @@ func (s *mcpServer) callTool(rawParams json.RawMessage) (map[string]any, *jsonRP
 		}
 		return toolTextResult(response.Quote), nil
 	default:
+		if strings.HasPrefix(params.Name, "goagent_shell_") {
+			return s.callShellTool(params)
+		}
 		return nil, &jsonRPCError{Code: -32601, Message: "unknown tool", Data: params.Name}
 	}
+}
+
+func (s *mcpServer) callShellTool(params mcpToolCallParams) (map[string]any, *jsonRPCError) {
+	provider, err := s.shellProvider()
+	if err != nil {
+		return nil, &jsonRPCError{Code: -32000, Message: "shell provider failed", Data: err.Error()}
+	}
+	endpointName, ok := shellEndpointForTool(provider, params.Name)
+	if !ok {
+		return nil, &jsonRPCError{Code: -32601, Message: "unknown tool", Data: params.Name}
+	}
+
+	args, err := stringArgumentMap(params.Arguments)
+	if err != nil {
+		return nil, &jsonRPCError{Code: -32602, Message: err.Error()}
+	}
+	response, err := provider.Run(endpointName, args)
+	if err != nil {
+		data := map[string]any{
+			"error": err.Error(),
+		}
+		if response.Output != "" {
+			data["output"] = response.Output
+		}
+		return nil, &jsonRPCError{Code: -32000, Message: "tool execution failed", Data: data}
+	}
+	return toolTextResult(response.Output), nil
+}
+
+func shellEndpointForTool(provider *shell.Provider, toolName string) (string, bool) {
+	for _, endpointName := range provider.EndpointNames() {
+		if shellToolName(endpointName) == toolName {
+			return endpointName, true
+		}
+	}
+	return "", false
+}
+
+var unsafeToolNameChars = regexp.MustCompile(`[^a-z0-9]+`)
+
+func shellToolName(endpointName string) string {
+	endpointName = strings.ToLower(strings.Trim(endpointName, "/"))
+	endpointName = unsafeToolNameChars.ReplaceAllString(endpointName, "_")
+	endpointName = strings.Trim(endpointName, "_")
+	if endpointName == "" {
+		endpointName = "endpoint"
+	}
+	return "goagent_shell_" + endpointName
+}
+
+func shellInputSchema(configuredArgs []string) map[string]any {
+	properties := map[string]any{}
+	params := shell.Params(configuredArgs)
+	for _, param := range params {
+		properties[param] = map[string]any{"type": "string"}
+	}
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+	}
+	if len(params) > 0 {
+		schema["required"] = params
+	}
+	return schema
+}
+
+func stringArgumentMap(args map[string]any) (map[string]string, error) {
+	values := map[string]string{}
+	for key, value := range args {
+		if value == nil {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string", key)
+		}
+		values[key] = text
+	}
+	return values, nil
 }
 
 func optionalStringArg(args map[string]any, name string) (string, error) {
