@@ -106,7 +106,8 @@ Usage:
   GoAgent serve
   GoAgent setup [server-url] [privacy-url]
   GoAgent gpt verify
-  GoAgent skill create [name] [output]
+  GoAgent skill create
+  GoAgent skill verify
   GoAgent key create [name]
   GoAgent key ls
   GoAgent key rm <name>
@@ -124,7 +125,7 @@ Examples:
   GoAgent setup https://example.trycloudflare.com https://example.com/privacy
   GoAgent gpt verify
   GoAgent skill create
-  GoAgent skill create local-goagent ./dist
+  GoAgent skill verify
   GoAgent key create
   GoAgent cloudflared update
   GoAgent config set listener.address 127.0.0.1:8080
