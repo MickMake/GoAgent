@@ -294,7 +294,11 @@ func (s *mcpServer) callShellTool(params mcpToolCallParams) (map[string]any, *js
 		if response.Output != "" {
 			data["output"] = response.Output
 		}
-		return nil, &jsonRPCError{Code: -32000, Message: "tool execution failed", Data: data}
+		code := -32000
+		if shell.IsMissingParameterError(err) {
+			code = -32602
+		}
+		return nil, &jsonRPCError{Code: code, Message: "tool execution failed", Data: data}
 	}
 	return toolTextResult(response.Output), nil
 }
