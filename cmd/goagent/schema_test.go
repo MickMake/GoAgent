@@ -159,3 +159,35 @@ func writeShellSchemaConfig(t *testing.T, providerBaseDir, contents string) {
 		t.Fatalf("write shell config: %v", err)
 	}
 }
+
+
+func TestWriteGPTActionSchemaMatchesGoldenFile(t *testing.T) {
+	shellCfg := shellSchemaConfig{
+		Endpoints: map[string]shellSchemaEndpoint{
+			"echo-text": {
+				Args:        []string{"$text", "$format"},
+				Description: "Echo supplied text.",
+			},
+			"os-version": {
+				Description: "Return OS version.",
+			},
+		},
+	}
+
+	var got strings.Builder
+	writeGPTActionSchema(&got, "https://goagent.example.test", shellCfg)
+
+	wantBytes, err := os.ReadFile(filepath.Join("testdata", "action-schema.golden.yaml"))
+	if err != nil {
+		t.Fatalf("read golden schema: %v", err)
+	}
+	want := string(wantBytes)
+
+	if got.String() != want {
+		t.Fatalf("generated schema differs from golden file
+--- got ---
+%s
+--- want ---
+%s", got.String(), want)
+	}
+}

@@ -1,0 +1,99 @@
+openapi: 3.1.0
+info:
+  title: GoAgent
+  version: 0.1.0
+  description: Local GoAgent actions exposed through an authenticated HTTP listener.
+servers:
+  - url: "https://goagent.example.test"
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      operationId: "getGoAgentHealth"
+      summary: "Check GoAgent health"
+      responses:
+        '200':
+          description: "GoAgent is running"
+  /version:
+    get:
+      operationId: "getGoAgentVersion"
+      summary: "Get GoAgent version"
+      responses:
+        '200':
+          description: "GoAgent version response"
+  /fortune:
+    get:
+      operationId: getFortune
+      summary: Get a fortune quote
+      parameters:
+        - name: "length"
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "short"
+              - "long"
+      responses:
+        '200':
+          description: Fortune quote response
+  /fortune/config:
+    get:
+      operationId: getFortuneConfig
+      summary: Get fortune provider configuration
+      responses:
+        '200':
+          description: Current fortune provider configuration
+    post:
+      operationId: setFortuneConfig
+      summary: Set fortune provider configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                default_length:
+                  type: string
+                  enum:
+                    - short
+                    - long
+              required:
+                - default_length
+      responses:
+        '200':
+          description: Updated fortune provider configuration
+  /shell/echo-text:
+    get:
+      operationId: "runShellEchoText"
+      summary: "Echo supplied text."
+      parameters:
+        - name: "format"
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: "text"
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Shell command output
+  /shell/os-version:
+    get:
+      operationId: "runShellOsVersion"
+      summary: "Return OS version."
+      responses:
+        '200':
+          description: Shell command output
+components:
+  schemas: {}
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
