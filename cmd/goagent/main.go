@@ -57,33 +57,18 @@ func main() {
 			log.Fatal(err)
 		}
 		return
-	case "setup":
-		if err := runSetupCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
 	case "gpt":
 		if err := runGPTCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
 		return
+	case "mcp":
+		if err := runMCPCommand(cfg, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
 	case "skill":
 		if err := runSkillCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
-	case "key":
-		if err := runAPIKeyCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
-	case "token":
-		if err := runTokenCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
-	case "cloudflared":
-		if err := runCloudflaredCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -103,38 +88,54 @@ func printHelp() {
 
 Usage:
   GoAgent help
+
   GoAgent serve
   GoAgent serve gpt
   GoAgent serve mcp
-  GoAgent setup [server-url] [privacy-url]
+
+  GoAgent gpt create [server-url] [privacy-url]
   GoAgent gpt verify
+  GoAgent gpt config
+  GoAgent gpt config set <key> <value>
+  GoAgent gpt config reset <key>
+  GoAgent gpt key
+  GoAgent gpt key create [name]
+  GoAgent gpt key rm <name>
+  GoAgent gpt token
+  GoAgent gpt token create [name]
+  GoAgent gpt token rm <name>
+  GoAgent gpt cloudflared update
+
+  GoAgent mcp create
+  GoAgent mcp verify
+  GoAgent mcp config
+  GoAgent mcp config set <key> <value>
+  GoAgent mcp config reset <key>
+
   GoAgent skill create
   GoAgent skill verify
-  GoAgent key create [name]
-  GoAgent key ls
-  GoAgent key rm <name>
-  GoAgent token add [name] <token>
-  GoAgent token ls
-  GoAgent token rm <name>
-  GoAgent cloudflared update
-  GoAgent config show
+  GoAgent skill config
+  GoAgent skill config set <key> <value>
+  GoAgent skill config reset <key>
+
+  GoAgent config
   GoAgent config set <section.key> <value>
   GoAgent config reset
+  GoAgent config reset <section.key>
 
 Examples:
   GoAgent serve
   GoAgent serve gpt
   GoAgent serve mcp
-  GoAgent setup https://example.trycloudflare.com
-  GoAgent setup https://example.trycloudflare.com https://example.com/privacy
+  GoAgent gpt create https://example.trycloudflare.com https://example.com/privacy
   GoAgent gpt verify
+  GoAgent gpt key create
+  GoAgent gpt cloudflared update
+  GoAgent mcp create
   GoAgent skill create
-  GoAgent skill verify
-  GoAgent key create
-  GoAgent cloudflared update
+  GoAgent config set global.artifact_dir ~/.GoAgent/artifacts
   GoAgent config set serve.mcp_enabled true
-  GoAgent config set listener.address 127.0.0.1:8080
-  GoAgent config show`)
+  GoAgent config reset serve.mcp_enabled`)
 }
 
 func runServeCommand(cfg AppConfig, args []string) error {

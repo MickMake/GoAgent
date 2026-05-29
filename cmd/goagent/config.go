@@ -22,6 +22,7 @@ type GlobalConfig struct {
 	CacheDir               string `json:"cache_dir"`
 	KeyDir                 string `json:"key_dir"`
 	ProviderBaseDir        string `json:"provider_base_dir"`
+	ArtifactDir            string `json:"artifact_dir"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds"`
 }
 
@@ -48,6 +49,7 @@ func defaultConfig() AppConfig {
 			CacheDir:               filepath.Join(base, "cache"),
 			KeyDir:                 filepath.Join(base, "keys"),
 			ProviderBaseDir:        filepath.Join(base, "providers"),
+			ArtifactDir:            filepath.Join(base, "artifacts"),
 			ShutdownTimeoutSeconds: 5,
 		},
 		Serve: ServeConfig{
@@ -101,6 +103,9 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	if cfg.Global.ProviderBaseDir == "" {
 		cfg.Global.ProviderBaseDir = defaults.Global.ProviderBaseDir
 	}
+	if cfg.Global.ArtifactDir == "" {
+		cfg.Global.ArtifactDir = defaults.Global.ArtifactDir
+	}
 	if cfg.Global.ShutdownTimeoutSeconds <= 0 {
 		cfg.Global.ShutdownTimeoutSeconds = defaults.Global.ShutdownTimeoutSeconds
 	}
@@ -128,6 +133,7 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	cfg.Global.CacheDir = expandPath(cfg.Global.CacheDir)
 	cfg.Global.KeyDir = expandPath(cfg.Global.KeyDir)
 	cfg.Global.ProviderBaseDir = expandPath(cfg.Global.ProviderBaseDir)
+	cfg.Global.ArtifactDir = expandPath(cfg.Global.ArtifactDir)
 	cfg.GPT.ServerURL = normalizeSchemaServerURL(cfg.GPT.ServerURL)
 	cfg.GPT.PrivacyURL = normalizeSchemaServerURL(cfg.GPT.PrivacyURL)
 	return cfg
@@ -151,30 +157,23 @@ func saveConfig(cfg AppConfig) error {
 
 func runConfigCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent config show | GoAgent config set <section.key> <value> | GoAgent config reset")
+		return printConfig(cfg)
 	}
 	switch args[0] {
 	case "show":
-		contents, err := json.MarshalIndent(normalizeConfig(cfg), "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(contents))
-		return nil
+		return printConfig(cfg)
 	case "set":
 		if len(args) != 3 {
 			return errors.New("usage: GoAgent config set <section.key> <value>")
 		}
-		updated, err := setConfigValue(cfg, args[1], args[2])
-		if err != nil {
-			return err
-		}
-		if err := saveConfig(updated); err != nil {
-			return err
-		}
-		fmt.Printf("set %s=%s\n", args[1], args[2])
-		return nil
+		return runConfigSet(cfg, args[1], args[2])
 	case "reset":
+		if len(args) > 2 {
+			return errors.New("usage: GoAgent config reset [section.key]")
+		}
+		if len(args) == 2 {
+			return runConfigResetKey(cfg, args[1])
+		}
 		if err := saveConfig(defaultConfig()); err != nil {
 			return err
 		}
@@ -183,6 +182,77 @@ func runConfigCommand(cfg AppConfig, args []string) error {
 	default:
 		return fmt.Errorf("unknown config command %q", args[0])
 	}
+}
+
+func runScopedConfigCommand(cfg AppConfig, scope string, args []string) error {
+	if len(args) == 0 {
+		return printConfigSection(cfg, scope)
+	}
+	switch args[0] {
+	case "set":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: GoAgent %s config set <key> <value>", scope)
+		}
+		return runConfigSet(cfg, scopedConfigKey(scope, args[1]), args[2])
+	case "reset":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: GoAgent %s config reset <key>", scope)
+		}
+		return runConfigResetKey(cfg, scopedConfigKey(scope, args[1]))
+	default:
+		return fmt.Errorf("unknown %s config command %q", scope, args[0])
+	}
+}
+
+func printConfig(cfg AppConfig) error {
+	contents, err := json.MarshalIndent(normalizeConfig(cfg), "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(contents))
+	return nil
+}
+
+func printConfigSection(cfg AppConfig, section string) error {
+	cfg = normalizeConfig(cfg)
+	var value any
+	switch section {
+	case "gpt":
+		value = cfg.GPT
+	case "mcp":
+		value = cfg.Serve
+	case "skill":
+		value = map[string]string{"artifact_dir": filepath.Join(cfg.Global.ArtifactDir, "skill")}
+	default:
+		return fmt.Errorf("unknown config section %q", section)
+	}
+	contents, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(contents))
+	return nil
+}
+
+func runConfigSet(cfg AppConfig, key, value string) error {
+	updated, err := setConfigValue(cfg, key, value)
+	if err != nil {
+		return err
+	}
+	if err := saveConfig(updated); err != nil {
+		return err
+	}
+	fmt.Printf("set %s=%s\n", normalizeConfigKey(key), value)
+	return nil
+}
+
+func runConfigResetKey(cfg AppConfig, key string) error {
+	key = normalizeConfigKey(key)
+	defaultValue, err := configDefaultString(defaultConfig(), key)
+	if err != nil {
+		return err
+	}
+	return runConfigSet(cfg, key, defaultValue)
 }
 
 func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
@@ -194,6 +264,8 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 		cfg.Global.KeyDir = expandPath(value)
 	case "global.provider_base_dir":
 		cfg.Global.ProviderBaseDir = expandPath(value)
+	case "global.artifact_dir":
+		cfg.Global.ArtifactDir = expandPath(value)
 	case "global.shutdown_timeout_seconds":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -256,7 +328,7 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 
 func normalizeConfigKey(key string) string {
 	switch key {
-	case "cache_dir", "key_dir", "provider_base_dir", "shutdown_timeout_seconds":
+	case "cache_dir", "key_dir", "provider_base_dir", "artifact_dir", "shutdown_timeout_seconds":
 		return "global." + key
 	case "gpt_enabled", "mcp_enabled":
 		return "serve." + key
@@ -268,6 +340,77 @@ func normalizeConfigKey(key string) string {
 		return "gpt." + key
 	default:
 		return key
+	}
+}
+
+func scopedConfigKey(scope, key string) string {
+	key = strings.TrimSpace(key)
+	if strings.Contains(key, ".") {
+		return key
+	}
+	switch scope {
+	case "gpt":
+		switch key {
+		case "server_url", "privacy_url":
+			return "gpt." + key
+		case "default_api_key", "default_quote_length", "address":
+			return "listener." + key
+		case "enabled", "mode", "default_token", "log_level", "version":
+			return "cloudflare." + key
+		}
+	case "mcp":
+		switch key {
+		case "enabled":
+			return "serve.mcp_enabled"
+		case "gpt_enabled", "mcp_enabled":
+			return "serve." + key
+		}
+	case "skill":
+		if key == "artifact_dir" {
+			return "global.artifact_dir"
+		}
+	}
+	return normalizeConfigKey(key)
+}
+
+func configDefaultString(cfg AppConfig, key string) (string, error) {
+	switch normalizeConfigKey(key) {
+	case "global.cache_dir":
+		return cfg.Global.CacheDir, nil
+	case "global.key_dir":
+		return cfg.Global.KeyDir, nil
+	case "global.provider_base_dir":
+		return cfg.Global.ProviderBaseDir, nil
+	case "global.artifact_dir":
+		return cfg.Global.ArtifactDir, nil
+	case "global.shutdown_timeout_seconds":
+		return strconv.Itoa(cfg.Global.ShutdownTimeoutSeconds), nil
+	case "serve.gpt_enabled":
+		return strconv.FormatBool(cfg.Serve.GPTEnabled), nil
+	case "serve.mcp_enabled":
+		return strconv.FormatBool(cfg.Serve.MCPEnabled), nil
+	case "listener.address":
+		return cfg.Listener.ListenAddr, nil
+	case "listener.default_api_key":
+		return cfg.Listener.DefaultAPIKey, nil
+	case "listener.default_quote_length":
+		return cfg.Listener.DefaultQuoteLength, nil
+	case "cloudflare.default_token":
+		return cfg.Cloudflare.DefaultToken, nil
+	case "cloudflare.enabled":
+		return strconv.FormatBool(cfg.Cloudflare.Enabled), nil
+	case "cloudflare.mode":
+		return cfg.Cloudflare.Mode, nil
+	case "cloudflare.log_level":
+		return cfg.Cloudflare.LogLevel, nil
+	case "cloudflare.version":
+		return cfg.Cloudflare.Version, nil
+	case "gpt.server_url":
+		return cfg.GPT.ServerURL, nil
+	case "gpt.privacy_url":
+		return cfg.GPT.PrivacyURL, nil
+	default:
+		return "", fmt.Errorf("unknown config key %q", key)
 	}
 }
 

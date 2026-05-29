@@ -26,14 +26,16 @@ var skillReferencePattern = regexp.MustCompile(`references/[A-Za-z0-9._/-]+`)
 
 func runSkillCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent skill create|verify")
+		return errors.New("usage: GoAgent skill create|verify|config")
 	}
 
 	switch args[0] {
 	case "create":
 		return runSkillCreateCommand(cfg, args[1:])
 	case "verify":
-		return runSkillVerifyCommand(args[1:])
+		return runSkillVerifyCommand(cfg, args[1:])
+	case "config":
+		return runScopedConfigCommand(cfg, "skill", args[1:])
 	default:
 		return fmt.Errorf("unknown skill command %q", args[0])
 	}
@@ -48,26 +50,33 @@ func runSkillCreateCommand(cfg AppConfig, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeSkillZip(defaultSkillZipFilename, defaultSkillDirectoryName, bundle); err != nil {
+
+	skillDir := filepath.Join(cfg.Global.ArtifactDir, "skill", defaultSkillDirectoryName)
+	zipPath := filepath.Join(cfg.Global.ArtifactDir, "skill", defaultSkillZipFilename)
+	if err := writeSkillDirectory(skillDir, bundle); err != nil {
+		return err
+	}
+	if err := writeSkillZip(zipPath, defaultSkillDirectoryName, bundle); err != nil {
 		return err
 	}
 
-	checks := validateSkillZip(defaultSkillZipFilename)
+	checks := validateSkillZip(zipPath)
 	printSkillVerifyReport(checks)
 	if countSkillFailures(checks) > 0 {
-		return fmt.Errorf("created %s but verification failed", defaultSkillZipFilename)
+		return fmt.Errorf("created %s but verification failed", zipPath)
 	}
 
-	fmt.Printf("created verified skill package: %s\n", defaultSkillZipFilename)
+	fmt.Printf("created skill directory: %s\n", skillDir)
+	fmt.Printf("created verified skill package: %s\n", zipPath)
 	return nil
 }
 
-func runSkillVerifyCommand(args []string) error {
+func runSkillVerifyCommand(cfg AppConfig, args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: GoAgent skill verify")
 	}
 
-	checks := validateSkillZip(defaultSkillZipFilename)
+	checks := validateSkillZip(filepath.Join(cfg.Global.ArtifactDir, "skill", defaultSkillZipFilename))
 	printSkillVerifyReport(checks)
 	if countSkillFailures(checks) > 0 {
 		return fmt.Errorf("skill verification failed")
@@ -281,6 +290,22 @@ func writeSkillZip(output, skillDirectoryName string, bundle skillBundle) error 
 
 	for _, path := range paths {
 		if err := addSkillZipFile(zipWriter, filepath.ToSlash(filepath.Join(skillDirectoryName, path)), bundle[path]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeSkillDirectory(output string, bundle skillBundle) error {
+	if err := os.RemoveAll(output); err != nil {
+		return err
+	}
+	for name, content := range bundle {
+		filename := filepath.Join(output, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filename, []byte(content), 0o600); err != nil {
 			return err
 		}
 	}

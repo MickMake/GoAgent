@@ -26,18 +26,64 @@ type verifyCheck struct {
 
 func runGPTCommand(cfg AppConfig, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: GoAgent gpt verify")
+		return errors.New("usage: GoAgent gpt create|verify|config|key|token|cloudflared")
 	}
 
 	switch args[0] {
+	case "create":
+		return runGPTCreateCommand(cfg, args[1:])
 	case "verify":
 		if len(args) != 1 {
 			return errors.New("usage: GoAgent gpt verify")
 		}
 		return runGPTVerifyCommand(cfg)
+	case "config":
+		return runScopedConfigCommand(cfg, "gpt", args[1:])
+	case "key":
+		return runGPTKeyCommand(cfg, args[1:])
+	case "token":
+		return runGPTTokenCommand(cfg, args[1:])
+	case "cloudflared":
+		return runGPTCloudflaredCommand(cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown gpt command %q", args[0])
 	}
+}
+
+func runGPTKeyCommand(cfg AppConfig, args []string) error {
+	if len(args) == 0 {
+		return listSecrets(cfg, "GoAgent-", ".key")
+	}
+	switch args[0] {
+	case "create":
+		if len(args) > 2 {
+			return errors.New("usage: GoAgent gpt key create [name]")
+		}
+		name := cfg.Listener.DefaultAPIKey
+		if len(args) == 2 {
+			name = args[1]
+		}
+		return createGeneratedSecret("GoAgent API key", func(name string) string { return goagentAPIKeyPath(cfg, name) }, name, true)
+	case "rm":
+		if len(args) != 2 {
+			return errors.New("usage: GoAgent gpt key rm <name>")
+		}
+		return removeSecret("GoAgent API key", func(name string) string { return goagentAPIKeyPath(cfg, name) }, args[1])
+	default:
+		return fmt.Errorf("unknown gpt key command %q", args[0])
+	}
+}
+
+func runGPTCloudflaredCommand(cfg AppConfig, args []string) error {
+	if len(args) != 1 || args[0] != "update" {
+		return errors.New("usage: GoAgent gpt cloudflared update")
+	}
+	path, err := updateCloudflared(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("updated cloudflared: %s\n", path)
+	return nil
 }
 
 func runGPTVerifyCommand(cfg AppConfig) error {

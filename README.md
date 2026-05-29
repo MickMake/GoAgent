@@ -12,6 +12,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Local stdio MCP server mode
 - API key authentication for HTTP provider endpoints
 - Persistent config under `~/.GoAgent/`
+- Generated artifacts under `~/.GoAgent/artifacts/`
 - Stored API keys and Cloudflare tunnel tokens
 - Auto-download and cache of `cloudflared`
 - Explicit `cloudflared` cache update command
@@ -19,7 +20,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Configurable shell provider: `/shell/<name>`
 - Dynamic MCP tools for configured shell endpoints
 - Optional shell response prefix field for clearer ChatGPT replies
-- GPT setup output for ChatGPT configuration: `GoAgent setup`
+- GPT setup/action artifact generation: `GoAgent gpt create`
 - GPT configuration verification: `GoAgent gpt verify`
 - Skill package generation and verification for reusable GoAgent workflows: `GoAgent skill create` and `GoAgent skill verify`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
@@ -156,20 +157,32 @@ GoAgent help
 GoAgent serve
 GoAgent serve gpt
 GoAgent serve mcp
-GoAgent setup [server-url] [privacy-url]
+GoAgent gpt create [server-url] [privacy-url]
 GoAgent gpt verify
 GoAgent skill create
 GoAgent skill verify
-GoAgent key create [name]
-GoAgent key ls
-GoAgent key rm <name>
-GoAgent token add [name] <token>
-GoAgent token ls
-GoAgent token rm <name>
-GoAgent cloudflared update
-GoAgent config show
+GoAgent gpt config
+GoAgent gpt config set <key> <value>
+GoAgent gpt config reset <key>
+GoAgent gpt key
+GoAgent gpt key create [name]
+GoAgent gpt key rm <name>
+GoAgent gpt token
+GoAgent gpt token create [name]
+GoAgent gpt token rm <name>
+GoAgent gpt cloudflared update
+GoAgent mcp create
+GoAgent mcp verify
+GoAgent mcp config
+GoAgent mcp config set <key> <value>
+GoAgent mcp config reset <key>
+GoAgent skill config
+GoAgent skill config set <key> <value>
+GoAgent skill config reset <key>
+GoAgent config
 GoAgent config set <section.key> <value>
 GoAgent config reset
+GoAgent config reset <section.key>
 ```
 
 `GoAgent` with no arguments prints help.
@@ -277,12 +290,30 @@ Example local stdio MCP client config shape:
 
 Use the full path to the binary if your MCP client does not inherit your shell `PATH`.
 
+
+## Generated artifacts
+
+Generated integration files are written under:
+
+```text
+~/.GoAgent/artifacts/
+├── gpt/
+│   ├── setup.md
+│   └── action-schema.yaml
+├── mcp/
+│   ├── client-config.json
+│   └── client-config.md
+└── skill/
+    ├── skill-GoAgent.zip
+    └── skill-GoAgent/
+```
+
 ## GPT setup
 
 Generate the full text needed to configure a Custom GPT and its Action:
 
 ```bash
-GoAgent setup
+GoAgent gpt create
 ```
 
 If server and privacy URLs are not already stored in config, `setup` prompts for them. Prompt messages and save confirmations are written to stderr so stdout remains copyable setup text.
@@ -290,7 +321,7 @@ If server and privacy URLs are not already stored in config, `setup` prompts for
 You can provide both URLs directly:
 
 ```bash
-GoAgent setup https://example.trycloudflare.com https://example.com/privacy
+GoAgent gpt create https://example.trycloudflare.com https://example.com/privacy
 ```
 
 When URLs are supplied, they are saved into config under:
@@ -435,7 +466,7 @@ Knowledge file URLs require the configured `X-API-Key` header.
 Show current config:
 
 ```bash
-GoAgent config show
+GoAgent config
 ```
 
 Reset config to defaults:
@@ -516,6 +547,7 @@ Set directories:
 GoAgent config set global.cache_dir ~/.GoAgent/cache
 GoAgent config set global.key_dir ~/.GoAgent/keys
 GoAgent config set global.provider_base_dir ~/.GoAgent/providers
+GoAgent config set global.artifact_dir ~/.GoAgent/artifacts
 ```
 
 Set shutdown timeout:
@@ -532,6 +564,7 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "cache_dir": "/home/mick/.GoAgent/cache",
     "key_dir": "/home/mick/.GoAgent/keys",
     "provider_base_dir": "/home/mick/.GoAgent/providers",
+    "artifact_dir": "/home/mick/.GoAgent/artifacts",
     "shutdown_timeout_seconds": 5
   },
   "serve": {
