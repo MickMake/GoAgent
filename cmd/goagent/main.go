@@ -210,12 +210,19 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 		return requireAPIKey(apiKey, next)
 	}
 
-	fortune.Register(mux, protect, cfg.Listener.DefaultQuoteLength)
-	if err := shell.Register(mux, protect, cfg.Global.ProviderBaseDir); err != nil {
+	fortune.RegisterWithRuntime(mux, protect, cfg.Listener.DefaultQuoteLength, fortuneRuntime(cfg))
+	if err := shell.RegisterWithRuntime(mux, protect, cfg.Global.ProviderBaseDir, shellRuntime(cfg)); err != nil {
 		return fmt.Errorf("shell provider failed: %w", err)
 	}
 
-	server := &http.Server{Addr: cfg.Listener.ListenAddr, Handler: mux}
+	server := &http.Server{
+		Addr:              cfg.Listener.ListenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("GoAgent GPT Actions listening on %s", cfg.Listener.ListenAddr)
@@ -304,6 +311,11 @@ func stopCloudflared(cmd *exec.Cmd) {
 }
 
 func root(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		writeJSON(w, http.StatusMethodNotAllowed, Response{Error: "method not allowed"})
+		return
+	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return

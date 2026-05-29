@@ -325,6 +325,14 @@ Set shutdown timeout:
 GoAgent config set global.shutdown_timeout_seconds 5
 ```
 
+Set local command runtime hardening:
+
+```bash
+GoAgent config set runtime.command_timeout_seconds 30
+GoAgent config set runtime.output_limit_bytes 1048576
+GoAgent config set runtime.child_env PATH=/usr/bin:/bin,LANG=C,LC_ALL=C
+```
+
 ## Knowledge files
 
 Files placed in:

@@ -12,10 +12,17 @@ import (
 
 type AppConfig struct {
 	Global     GlobalConfig     `json:"global"`
+	Runtime    RuntimeConfig    `json:"runtime"`
 	Serve      ServeConfig      `json:"serve"`
 	Listener   ListenerConfig   `json:"listener"`
 	Cloudflare CloudflareConfig `json:"cloudflare"`
 	GPT        GPTConfig        `json:"gpt"`
+}
+
+type RuntimeConfig struct {
+	CommandTimeoutSeconds int      `json:"command_timeout_seconds"`
+	OutputLimitBytes      int      `json:"output_limit_bytes"`
+	ChildEnv              []string `json:"child_env"`
 }
 
 type GlobalConfig struct {
@@ -51,6 +58,11 @@ func defaultConfig() AppConfig {
 			ProviderBaseDir:        filepath.Join(base, "providers"),
 			ArtifactDir:            filepath.Join(base, "artifacts"),
 			ShutdownTimeoutSeconds: 5,
+		},
+		Runtime: RuntimeConfig{
+			CommandTimeoutSeconds: 30,
+			OutputLimitBytes:      1024 * 1024,
+			ChildEnv:              []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C"},
 		},
 		Serve: ServeConfig{
 			GPTEnabled: true,
@@ -108,6 +120,15 @@ func normalizeConfig(cfg AppConfig) AppConfig {
 	}
 	if cfg.Global.ShutdownTimeoutSeconds <= 0 {
 		cfg.Global.ShutdownTimeoutSeconds = defaults.Global.ShutdownTimeoutSeconds
+	}
+	if cfg.Runtime.CommandTimeoutSeconds <= 0 {
+		cfg.Runtime.CommandTimeoutSeconds = defaults.Runtime.CommandTimeoutSeconds
+	}
+	if cfg.Runtime.OutputLimitBytes <= 0 {
+		cfg.Runtime.OutputLimitBytes = defaults.Runtime.OutputLimitBytes
+	}
+	if len(cfg.Runtime.ChildEnv) == 0 {
+		cfg.Runtime.ChildEnv = defaults.Runtime.ChildEnv
 	}
 	if cfg.Listener.ListenAddr == "" {
 		cfg.Listener.ListenAddr = defaults.Listener.ListenAddr
@@ -353,6 +374,26 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 			return cfg, errors.New("global.shutdown_timeout_seconds must be greater than zero")
 		}
 		cfg.Global.ShutdownTimeoutSeconds = parsed
+	case "runtime.command_timeout_seconds":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return cfg, err
+		}
+		if parsed <= 0 {
+			return cfg, errors.New("runtime.command_timeout_seconds must be greater than zero")
+		}
+		cfg.Runtime.CommandTimeoutSeconds = parsed
+	case "runtime.output_limit_bytes":
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return cfg, err
+		}
+		if parsed <= 0 {
+			return cfg, errors.New("runtime.output_limit_bytes must be greater than zero")
+		}
+		cfg.Runtime.OutputLimitBytes = parsed
+	case "runtime.child_env":
+		cfg.Runtime.ChildEnv = splitConfigList(value)
 	case "serve.gpt_enabled":
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
@@ -408,6 +449,8 @@ func normalizeConfigKey(key string) string {
 	switch key {
 	case "cache_dir", "key_dir", "provider_base_dir", "artifact_dir", "shutdown_timeout_seconds":
 		return "global." + key
+	case "command_timeout_seconds", "output_limit_bytes", "child_env":
+		return "runtime." + key
 	case "gpt_enabled", "mcp_enabled":
 		return "serve." + key
 	case "address", "default_api_key", "default_quote_length":
@@ -463,6 +506,12 @@ func configDefaultString(cfg AppConfig, key string) (string, error) {
 		return cfg.Global.ArtifactDir, nil
 	case "global.shutdown_timeout_seconds":
 		return strconv.Itoa(cfg.Global.ShutdownTimeoutSeconds), nil
+	case "runtime.command_timeout_seconds":
+		return strconv.Itoa(cfg.Runtime.CommandTimeoutSeconds), nil
+	case "runtime.output_limit_bytes":
+		return strconv.Itoa(cfg.Runtime.OutputLimitBytes), nil
+	case "runtime.child_env":
+		return strings.Join(cfg.Runtime.ChildEnv, ","), nil
 	case "serve.gpt_enabled":
 		return strconv.FormatBool(cfg.Serve.GPTEnabled), nil
 	case "serve.mcp_enabled":
@@ -490,6 +539,18 @@ func configDefaultString(cfg AppConfig, key string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown config key %q", key)
 	}
+}
+
+func splitConfigList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func goAgentDir() (string, error) {

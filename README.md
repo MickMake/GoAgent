@@ -18,6 +18,7 @@ For worked commands and copy/paste examples, see [EXAMPLES.md](EXAMPLES.md).
 - Local HTTP listener for Custom GPT Actions
 - Local stdio MCP server mode
 - API key authentication for HTTP provider endpoints
+- Runtime hardening for local command execution: command timeout, output limit, and explicit child process environment
 - Persistent config under `~/.GoAgent/`
 - Generated artifacts under `~/.GoAgent/artifacts/`
 - Stored API keys and Cloudflare tunnel tokens
@@ -337,6 +338,15 @@ Example config shape:
     "artifact_dir": "/home/mick/.GoAgent/artifacts",
     "shutdown_timeout_seconds": 5
   },
+  "runtime": {
+    "command_timeout_seconds": 30,
+    "output_limit_bytes": 1048576,
+    "child_env": [
+      "PATH=/usr/bin:/bin",
+      "LANG=C",
+      "LC_ALL=C"
+    ]
+  },
   "serve": {
     "gpt_enabled": true,
     "mcp_enabled": false
@@ -372,6 +382,24 @@ disabled       Do not start Cloudflare Tunnel.
 ```
 
 Shell provider response prefixes are configured in `~/.GoAgent/providers/shell/config.json`, not in the main GoAgent config file.
+
+## Runtime hardening
+
+GoAgent bounds local command execution by default:
+
+- `runtime.command_timeout_seconds`: maximum runtime for shell and fortune commands; default `30`
+- `runtime.output_limit_bytes`: maximum captured stdout/stderr; default `1048576`
+- `runtime.child_env`: explicit environment passed to child processes; default `PATH=/usr/bin:/bin`, `LANG=C`, `LC_ALL=C`
+
+Set values with:
+
+```bash
+GoAgent config set runtime.command_timeout_seconds 30
+GoAgent config set runtime.output_limit_bytes 1048576
+GoAgent config set runtime.child_env PATH=/usr/bin:/bin,LANG=C,LC_ALL=C
+```
+
+Do not add secrets, tokens, SSH agent values, or broad inherited environments to `runtime.child_env` unless the endpoint specifically requires them.
 
 ## More examples
 
