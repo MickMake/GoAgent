@@ -17,6 +17,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Explicit `cloudflared` cache update command
 - Fortune provider: `/fortune`
 - Configurable shell provider: `/shell/<name>`
+- Dynamic MCP tools for configured shell endpoints
 - Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
 - GPT configuration verification: `GoAgent gpt verify`
@@ -146,6 +147,8 @@ The shell provider is always loaded. Its config file is optional: if `~/.GoAgent
 
 Shell config can include a top-level `prefix` such as `"GoAgent: "`. When present, shell endpoint responses include that value as a `prefix` field, and `GoAgent setup` adds shell-provider instructions telling the GPT to use it in final answers. Remove the field or set it to an empty string to disable the behaviour.
 
+The same shell provider config is used by HTTP Actions and MCP. HTTP exposes shell endpoints as `/shell/<name>`. MCP exposes each configured shell endpoint as a safely generated tool name such as `goagent_shell_os_version` or `goagent_shell_upper`.
+
 ## CLI commands
 
 ```text
@@ -222,11 +225,34 @@ GoAgent serve mcp
 
 MCP mode is for live local access from MCP-capable clients without going through a Custom GPT Action or Cloudflare Tunnel.
 
-Phase 1 MCP tools:
+Built-in MCP tools:
 
 - `goagent_health`
 - `goagent_version`
 - `goagent_fortune`
+
+Configured shell endpoints are exposed dynamically as MCP tools. Tool names are generated safely from endpoint names:
+
+```text
+/shell/os-version -> goagent_shell_os_version
+/shell/upper      -> goagent_shell_upper
+```
+
+Any shell provider argument beginning with `$` becomes a required string argument in the MCP tool input schema. For example:
+
+```json
+{
+  "upper": {
+    "command": "/usr/bin/awk",
+    "args": ["BEGIN { print toupper(ARGV[1]); exit }", "$text"],
+    "description": "Uppercase supplied text using a fixed awk program."
+  }
+}
+```
+
+becomes an MCP tool named `goagent_shell_upper` with required argument `text`.
+
+Shell MCP tools use the same execution path as HTTP shell endpoints: no shell interpolation, no `sh -c`, configured command path validation, argv-only user input, and existing chroot behaviour.
 
 Start only the MCP server:
 
