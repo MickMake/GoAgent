@@ -2,6 +2,7 @@ package fortune
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -15,6 +16,15 @@ const (
 )
 
 type Middleware func(http.HandlerFunc) http.HandlerFunc
+
+type Endpoint struct {
+	Command              string   `json:"command"`
+	Args                 []string `json:"args"`
+	Chroot               string   `json:"chroot,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	Instruction          string   `json:"instruction,omitempty"`
+	ConversationStarters []string `json:"conversation_starters,omitempty"`
+}
 
 type Response struct {
 	Endpoint      string `json:"endpoint,omitempty"`
@@ -39,6 +49,31 @@ func Register(mux *http.ServeMux, protect Middleware, initialDefaultLength strin
 	mux.HandleFunc("/fortune/config", protect(config))
 }
 
+// Quote returns a fortune response using the same validation and command execution
+// as the HTTP provider. If length is empty, the current default length is used.
+func Quote(length string) (Response, error) {
+	if length == "" {
+		length = getDefaultLength()
+	}
+
+	args := fortuneArgs(length)
+	if args == nil {
+		return Response{}, fmt.Errorf("use length=short or length=long")
+	}
+
+	out, err := exec.Command("fortune", args...).Output()
+	if err != nil {
+		return Response{}, err
+	}
+
+	return Response{
+		Endpoint:      "/fortune",
+		Marker:        markerQuoteEndpoint,
+		Quote:         strings.TrimSpace(string(out)),
+		DefaultLength: getDefaultLength(),
+	}, nil
+}
+
 func quote(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
@@ -46,29 +81,17 @@ func quote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	length := r.URL.Query().Get("length")
-	if length == "" {
-		length = getDefaultLength()
-	}
-
-	args := fortuneArgs(length)
-	if args == nil {
-		writeJSON(w, http.StatusBadRequest, Response{Error: "use length=short or length=long"})
-		return
-	}
-
-	out, err := exec.Command("fortune", args...).Output()
+	response, err := Quote(r.URL.Query().Get("length"))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, Response{Error: err.Error()})
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "use length=short or length=long") {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, Response{Error: err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, Response{
-		Endpoint:      "/fortune",
-		Marker:        markerQuoteEndpoint,
-		Quote:         strings.TrimSpace(string(out)),
-		DefaultLength: getDefaultLength(),
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func config(w http.ResponseWriter, r *http.Request) {
