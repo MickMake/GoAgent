@@ -104,6 +104,8 @@ func printHelp() {
 Usage:
   GoAgent help
   GoAgent serve
+  GoAgent serve gpt
+  GoAgent serve mcp
   GoAgent setup [server-url] [privacy-url]
   GoAgent gpt verify
   GoAgent skill create
@@ -121,6 +123,8 @@ Usage:
 
 Examples:
   GoAgent serve
+  GoAgent serve gpt
+  GoAgent serve mcp
   GoAgent setup https://example.trycloudflare.com
   GoAgent setup https://example.trycloudflare.com https://example.com/privacy
   GoAgent gpt verify
@@ -128,15 +132,54 @@ Examples:
   GoAgent skill verify
   GoAgent key create
   GoAgent cloudflared update
+  GoAgent config set serve.mcp_enabled true
   GoAgent config set listener.address 127.0.0.1:8080
   GoAgent config show`)
 }
 
 func runServeCommand(cfg AppConfig, args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("serve does not accept arguments; set runtime options in config")
+	if len(args) > 1 {
+		return fmt.Errorf("usage: GoAgent serve [gpt|mcp]")
+	}
+	if len(args) == 1 {
+		switch args[0] {
+		case "gpt":
+			return runGPTServeCommand(cfg)
+		case "mcp":
+			return runMCPServeCommand(cfg)
+		default:
+			return fmt.Errorf("unknown serve target %q; use gpt or mcp", args[0])
+		}
 	}
 
+	if !cfg.Serve.GPTEnabled && !cfg.Serve.MCPEnabled {
+		return fmt.Errorf("nothing to serve; enable serve.gpt_enabled or serve.mcp_enabled in config")
+	}
+	if cfg.Serve.GPTEnabled && cfg.Serve.MCPEnabled {
+		errCh := make(chan error, 2)
+		go func() {
+			if err := runGPTServeCommand(cfg); err != nil {
+				errCh <- fmt.Errorf("gpt serve failed: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+		go func() {
+			if err := runMCPServeCommand(cfg); err != nil {
+				errCh <- fmt.Errorf("mcp serve failed: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+		return <-errCh
+	}
+	if cfg.Serve.MCPEnabled {
+		return runMCPServeCommand(cfg)
+	}
+	return runGPTServeCommand(cfg)
+}
+
+func runGPTServeCommand(cfg AppConfig) error {
 	apiKey, err := loadAPIKey(cfg)
 	if err != nil {
 		return err
@@ -174,7 +217,7 @@ func runDaemon(cfg AppConfig, apiKey string, tunnel bool) error {
 	server := &http.Server{Addr: cfg.Listener.ListenAddr, Handler: mux}
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("GoAgent listening on %s", cfg.Listener.ListenAddr)
+		log.Printf("GoAgent GPT Actions listening on %s", cfg.Listener.ListenAddr)
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err

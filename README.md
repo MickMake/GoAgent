@@ -4,44 +4,59 @@ Minimal Go-based local agent for ChatGPT integration experiments.
 
 Built from a tractor in a field, which feels important architecturally.
 
-GoAgent runs a small HTTP service on your machine, protects provider endpoints with an `X-API-Key` header, and can expose itself through Cloudflare Tunnel so ChatGPT can call it safely without opening inbound firewall ports.
+GoAgent runs a small HTTP service on your machine, protects provider endpoints with an `X-API-Key` header, and can expose itself through Cloudflare Tunnel so ChatGPT can call it safely without opening inbound firewall ports. It can also run a local stdio MCP server for MCP-capable clients.
 
 ## Features
 
-- Local HTTP listener
-- API key authentication
+- Local HTTP listener for Custom GPT Actions
+- Local stdio MCP server mode
+- API key authentication for HTTP provider endpoints
 - Persistent config under `~/.GoAgent/`
 - Stored API keys and Cloudflare tunnel tokens
 - Auto-download and cache of `cloudflared`
 - Explicit `cloudflared` cache update command
 - Fortune provider: `/fortune`
 - Configurable shell provider: `/shell/<name>`
+- Dynamic MCP tools for configured shell endpoints
 - Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
 - GPT configuration verification: `GoAgent gpt verify`
 - Skill package generation and verification for reusable GoAgent workflows: `GoAgent skill create` and `GoAgent skill verify`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
-- Designed for ChatGPT Actions and Skill-guided workflows
+- Designed for ChatGPT Actions, MCP clients, and Skill-guided workflows
 - Tiny and gloriously boring, which is often where reliability hides
 
 ## Architecture
+
+Custom GPT Action path:
 
 ```text
 ChatGPT
   -> Custom GPT Action
   -> HTTPS Cloudflare Tunnel
-  -> GoAgent on localhost
+  -> GoAgent GPT HTTP server on localhost
   -> provider endpoint
 ```
 
-Default local listener:
+MCP path:
+
+```text
+MCP client
+  -> stdio subprocess
+  -> GoAgent MCP server
+  -> shared GoAgent provider functions
+```
+
+Skills are not a transport layer. They help ChatGPT follow GoAgent conventions and reference generated setup/schema material, but they do not call GoAgent directly and cannot proxy through a Custom GPT Action. MCP exists for live local tool access outside the Custom GPT Action path.
+
+Default local HTTP listener:
 
 ```text
 127.0.0.1:8080
 ```
 
-Cloudflare Tunnel exposes the local listener over HTTPS without requiring public inbound ports.
+Cloudflare Tunnel exposes the local HTTP listener over HTTPS without requiring public inbound ports. MCP stdio does not use Cloudflare or HTTP.
 
 ## Requirements
 
@@ -73,11 +88,13 @@ Generate an API key and capture it for this shell session:
 export GOAGENT_API_KEY="$(GoAgent key create | awk '/X-API-Key:/ {print $2}')"
 ```
 
-Start the daemon:
+Start the default server mode:
 
 ```bash
 GoAgent serve
 ```
+
+By default, `GoAgent serve` runs the GPT HTTP Action server only. That preserves the original behaviour, because surprises belong in Christmas crackers, not daemons.
 
 In another terminal, reuse the same key value or export it there too. Then check health:
 
@@ -130,11 +147,15 @@ The shell provider is always loaded. Its config file is optional: if `~/.GoAgent
 
 Shell config can include a top-level `prefix` such as `"GoAgent: "`. When present, shell endpoint responses include that value as a `prefix` field, and `GoAgent setup` adds shell-provider instructions telling the GPT to use it in final answers. Remove the field or set it to an empty string to disable the behaviour.
 
+The same shell provider config is used by HTTP Actions and MCP. HTTP exposes shell endpoints as `/shell/<name>`. MCP exposes each configured shell endpoint as a safely generated tool name such as `goagent_shell_os_version` or `goagent_shell_upper`.
+
 ## CLI commands
 
 ```text
 GoAgent help
 GoAgent serve
+GoAgent serve gpt
+GoAgent serve mcp
 GoAgent setup [server-url] [privacy-url]
 GoAgent gpt verify
 GoAgent skill create
@@ -153,9 +174,108 @@ GoAgent config reset
 
 `GoAgent` with no arguments prints help.
 
-`GoAgent serve` starts the daemon. Runtime options such as listen address and Cloudflare tunnel behaviour are read from config only.
+`GoAgent serve` starts whatever server modes are enabled in config.
+
+`GoAgent serve gpt` starts only the Custom GPT Actions HTTP server.
+
+`GoAgent serve mcp` starts only the stdio MCP server.
 
 `GoAgent cloudflared update` forces a fresh `cloudflared` download into the cache and validates it before use. This is the deliberate-update lever; otherwise GoAgent reuses a valid cached binary.
+
+## Serve modes
+
+GoAgent has two live transport interfaces:
+
+| Command | Transport | Purpose |
+| --- | --- | --- |
+| `GoAgent serve gpt` | HTTP + optional Cloudflare Tunnel | Custom GPT Actions |
+| `GoAgent serve mcp` | stdio JSON-RPC | Local MCP clients |
+| `GoAgent serve` | Config-driven | Starts enabled modes |
+
+Default config:
+
+```json
+"serve": {
+  "gpt_enabled": true,
+  "mcp_enabled": false
+}
+```
+
+To make bare `GoAgent serve` run both the GPT HTTP server and MCP server:
+
+```bash
+GoAgent config set serve.gpt_enabled true
+GoAgent config set serve.mcp_enabled true
+GoAgent serve
+```
+
+When both are enabled, MCP owns stdout because stdio MCP requires stdout to contain protocol messages only. GoAgent logs go to stderr. The GPT HTTP server continues to listen on the configured local address in the same process.
+
+For separate terminals or supervisors, run them explicitly:
+
+```bash
+# Terminal 1
+GoAgent serve gpt
+
+# Terminal 2, or launched by an MCP client
+GoAgent serve mcp
+```
+
+## MCP mode
+
+MCP mode is for live local access from MCP-capable clients without going through a Custom GPT Action or Cloudflare Tunnel.
+
+Built-in MCP tools:
+
+- `goagent_health`
+- `goagent_version`
+- `goagent_fortune`
+
+Configured shell endpoints are exposed dynamically as MCP tools. Tool names are generated safely from endpoint names:
+
+```text
+/shell/os-version -> goagent_shell_os_version
+/shell/upper      -> goagent_shell_upper
+```
+
+Any shell provider argument beginning with `$` becomes a required string argument in the MCP tool input schema. For example:
+
+```json
+{
+  "upper": {
+    "command": "/usr/bin/awk",
+    "args": ["BEGIN { print toupper(ARGV[1]); exit }", "$text"],
+    "description": "Uppercase supplied text using a fixed awk program."
+  }
+}
+```
+
+becomes an MCP tool named `goagent_shell_upper` with required argument `text`.
+
+Shell MCP tools use the same execution path as HTTP shell endpoints: no shell interpolation, no `sh -c`, configured command path validation, argv-only user input, and existing chroot behaviour.
+
+Start only the MCP server:
+
+```bash
+GoAgent serve mcp
+```
+
+The MCP server uses stdio transport. It reads JSON-RPC messages from stdin, writes valid MCP JSON-RPC messages to stdout, and uses stderr for logs/errors/debug output. Do not pipe casual text into it unless you enjoy watching protocol parsers raise one eyebrow.
+
+Example local stdio MCP client config shape:
+
+```json
+{
+  "mcpServers": {
+    "goagent": {
+      "command": "GoAgent",
+      "args": ["serve", "mcp"]
+    }
+  }
+}
+```
+
+Use the full path to the binary if your MCP client does not inherit your shell `PATH`.
 
 ## GPT setup
 
@@ -265,7 +385,7 @@ The verifier checks `skill-GoAgent.zip` for:
 - core Action schema operations and API key auth
 - unsafe zip paths such as absolute paths or `..` traversal
 
-The Skill helps ChatGPT follow GoAgent conventions, but it does not install the Custom GPT Action or API key by itself. It is a very useful clipboard, not a licensed electrician.
+The Skill helps ChatGPT follow GoAgent conventions, but it does not install the Custom GPT Action, API key, MCP client, or transport wiring by itself. It is a very useful clipboard, not a licensed electrician.
 
 ## GPT Action schema
 
@@ -322,6 +442,13 @@ Reset config to defaults:
 
 ```bash
 GoAgent config reset
+```
+
+Set serve modes:
+
+```bash
+GoAgent config set serve.gpt_enabled true
+GoAgent config set serve.mcp_enabled false
 ```
 
 Set the local listen address:
@@ -406,6 +533,10 @@ GoAgent config set global.shutdown_timeout_seconds 5
     "key_dir": "/home/mick/.GoAgent/keys",
     "provider_base_dir": "/home/mick/.GoAgent/providers",
     "shutdown_timeout_seconds": 5
+  },
+  "serve": {
+    "gpt_enabled": true,
+    "mcp_enabled": false
   },
   "listener": {
     "address": "127.0.0.1:8080",

@@ -12,6 +12,7 @@ import (
 
 type AppConfig struct {
 	Global     GlobalConfig     `json:"global"`
+	Serve      ServeConfig      `json:"serve"`
 	Listener   ListenerConfig   `json:"listener"`
 	Cloudflare CloudflareConfig `json:"cloudflare"`
 	GPT        GPTConfig        `json:"gpt"`
@@ -22,6 +23,11 @@ type GlobalConfig struct {
 	KeyDir                 string `json:"key_dir"`
 	ProviderBaseDir        string `json:"provider_base_dir"`
 	ShutdownTimeoutSeconds int    `json:"shutdown_timeout_seconds"`
+}
+
+type ServeConfig struct {
+	GPTEnabled bool `json:"gpt_enabled"`
+	MCPEnabled bool `json:"mcp_enabled"`
 }
 
 type ListenerConfig struct {
@@ -43,6 +49,10 @@ func defaultConfig() AppConfig {
 			KeyDir:                 filepath.Join(base, "keys"),
 			ProviderBaseDir:        filepath.Join(base, "providers"),
 			ShutdownTimeoutSeconds: 5,
+		},
+		Serve: ServeConfig{
+			GPTEnabled: true,
+			MCPEnabled: false,
 		},
 		Listener: ListenerConfig{
 			ListenAddr:         "127.0.0.1:8080",
@@ -193,6 +203,18 @@ func setConfigValue(cfg AppConfig, key, value string) (AppConfig, error) {
 			return cfg, errors.New("global.shutdown_timeout_seconds must be greater than zero")
 		}
 		cfg.Global.ShutdownTimeoutSeconds = parsed
+	case "serve.gpt_enabled":
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Serve.GPTEnabled = parsed
+	case "serve.mcp_enabled":
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Serve.MCPEnabled = parsed
 	case "listener.address":
 		cfg.Listener.ListenAddr = value
 	case "listener.default_api_key":
@@ -236,6 +258,8 @@ func normalizeConfigKey(key string) string {
 	switch key {
 	case "cache_dir", "key_dir", "provider_base_dir", "shutdown_timeout_seconds":
 		return "global." + key
+	case "gpt_enabled", "mcp_enabled":
+		return "serve." + key
 	case "address", "default_api_key", "default_quote_length":
 		return "listener." + key
 	case "default_token", "enabled", "mode", "log_level", "version":
