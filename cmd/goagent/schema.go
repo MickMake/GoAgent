@@ -384,101 +384,109 @@ func knowledgeHandler(apiKey string) http.HandlerFunc {
 	})
 }
 
+type schemaYAMLWriter struct {
+	out io.Writer
+}
+
+func (w schemaYAMLWriter) line(format string, args ...any) {
+	if len(args) == 0 {
+		fmt.Fprintln(w.out, format)
+		return
+	}
+	fmt.Fprintf(w.out, format+"\n", args...)
+}
+
 func writeGPTActionSchema(out io.Writer, serverURL string, shellCfg shellSchemaConfig) {
-	fmt.Fprintln(out, "openapi: 3.1.0")
-	fmt.Fprintln(out, "info:")
-	fmt.Fprintln(out, "  title: GoAgent")
-	fmt.Fprintln(out, "  version: 0.1.0")
-	fmt.Fprintln(out, "  description: Local GoAgent actions exposed through an authenticated HTTP listener.")
-	fmt.Fprintln(out, "servers:")
-	fmt.Fprintf(out, "  - url: %s\n", yamlString(serverURL))
-	fmt.Fprintln(out, "security:")
-	fmt.Fprintln(out, "  - ApiKeyAuth: []")
-	fmt.Fprintln(out, "paths:")
-	writeHealthPath(out)
-	writeVersionPath(out)
-	writeFortunePath(out)
-	writeFortuneConfigPath(out)
-	writeShellPaths(out, shellCfg)
-	fmt.Fprintln(out, "components:")
-	fmt.Fprintln(out, "  schemas: {}")
-	fmt.Fprintln(out, "  securitySchemes:")
-	fmt.Fprintln(out, "    ApiKeyAuth:")
-	fmt.Fprintln(out, "      type: apiKey")
-	fmt.Fprintln(out, "      in: header")
-	fmt.Fprintln(out, "      name: X-API-Key")
+	w := schemaYAMLWriter{out: out}
+	writeOpenAPIHeader(w, serverURL)
+	writeCorePaths(w)
+	writeShellPaths(w, shellCfg)
+	writeOpenAPIComponents(w)
 }
 
-func writeHealthPath(out io.Writer) {
-	fmt.Fprintln(out, "  /health:")
-	fmt.Fprintln(out, "    get:")
-	fmt.Fprintln(out, "      operationId: getGoAgentHealth")
-	fmt.Fprintln(out, "      summary: Check GoAgent health")
-	fmt.Fprintln(out, "      responses:")
-	fmt.Fprintln(out, "        '200':")
-	fmt.Fprintln(out, "          description: GoAgent is running")
+func writeOpenAPIHeader(w schemaYAMLWriter, serverURL string) {
+	w.line("openapi: 3.1.0")
+	w.line("info:")
+	w.line("  title: GoAgent")
+	w.line("  version: 0.1.0")
+	w.line("  description: Local GoAgent actions exposed through an authenticated HTTP listener.")
+	w.line("servers:")
+	w.line("  - url: %s", yamlString(serverURL))
+	w.line("security:")
+	w.line("  - ApiKeyAuth: []")
+	w.line("paths:")
 }
 
-func writeVersionPath(out io.Writer) {
-	fmt.Fprintln(out, "  /version:")
-	fmt.Fprintln(out, "    get:")
-	fmt.Fprintln(out, "      operationId: getGoAgentVersion")
-	fmt.Fprintln(out, "      summary: Get GoAgent version")
-	fmt.Fprintln(out, "      responses:")
-	fmt.Fprintln(out, "        '200':")
-	fmt.Fprintln(out, "          description: GoAgent version response")
+func writeCorePaths(w schemaYAMLWriter) {
+	writeSimpleGetPath(w, "/health", "getGoAgentHealth", "Check GoAgent health", "GoAgent is running")
+	writeSimpleGetPath(w, "/version", "getGoAgentVersion", "Get GoAgent version", "GoAgent version response")
+	writeFortunePath(w)
+	writeFortuneConfigPath(w)
 }
 
-func writeFortunePath(out io.Writer) {
-	fmt.Fprintln(out, "  /fortune:")
-	fmt.Fprintln(out, "    get:")
-	fmt.Fprintln(out, "      operationId: getFortune")
-	fmt.Fprintln(out, "      summary: Get a fortune quote")
-	fmt.Fprintln(out, "      parameters:")
-	fmt.Fprintln(out, "        - name: length")
-	fmt.Fprintln(out, "          in: query")
-	fmt.Fprintln(out, "          required: false")
-	fmt.Fprintln(out, "          schema:")
-	fmt.Fprintln(out, "            type: string")
-	fmt.Fprintln(out, "            enum:")
-	fmt.Fprintln(out, "              - short")
-	fmt.Fprintln(out, "              - long")
-	fmt.Fprintln(out, "      responses:")
-	fmt.Fprintln(out, "        '200':")
-	fmt.Fprintln(out, "          description: Fortune quote response")
+func writeOpenAPIComponents(w schemaYAMLWriter) {
+	w.line("components:")
+	w.line("  schemas: {}")
+	w.line("  securitySchemes:")
+	w.line("    ApiKeyAuth:")
+	w.line("      type: apiKey")
+	w.line("      in: header")
+	w.line("      name: X-API-Key")
 }
 
-func writeFortuneConfigPath(out io.Writer) {
-	fmt.Fprintln(out, "  /fortune/config:")
-	fmt.Fprintln(out, "    get:")
-	fmt.Fprintln(out, "      operationId: getFortuneConfig")
-	fmt.Fprintln(out, "      summary: Get fortune provider configuration")
-	fmt.Fprintln(out, "      responses:")
-	fmt.Fprintln(out, "        '200':")
-	fmt.Fprintln(out, "          description: Current fortune provider configuration")
-	fmt.Fprintln(out, "    post:")
-	fmt.Fprintln(out, "      operationId: setFortuneConfig")
-	fmt.Fprintln(out, "      summary: Set fortune provider configuration")
-	fmt.Fprintln(out, "      requestBody:")
-	fmt.Fprintln(out, "        required: true")
-	fmt.Fprintln(out, "        content:")
-	fmt.Fprintln(out, "          application/json:")
-	fmt.Fprintln(out, "            schema:")
-	fmt.Fprintln(out, "              type: object")
-	fmt.Fprintln(out, "              properties:")
-	fmt.Fprintln(out, "                default_length:")
-	fmt.Fprintln(out, "                  type: string")
-	fmt.Fprintln(out, "                  enum:")
-	fmt.Fprintln(out, "                    - short")
-	fmt.Fprintln(out, "                    - long")
-	fmt.Fprintln(out, "              required:")
-	fmt.Fprintln(out, "                - default_length")
-	fmt.Fprintln(out, "      responses:")
-	fmt.Fprintln(out, "        '200':")
-	fmt.Fprintln(out, "          description: Updated fortune provider configuration")
+func writeSimpleGetPath(w schemaYAMLWriter, path, operationID, summary, responseDescription string) {
+	w.line("  %s:", path)
+	w.line("    get:")
+	w.line("      operationId: %s", yamlString(operationID))
+	w.line("      summary: %s", yamlString(summary))
+	w.line("      responses:")
+	w.line("        '200':")
+	w.line("          description: %s", yamlString(responseDescription))
 }
 
-func writeShellPaths(out io.Writer, shellCfg shellSchemaConfig) {
+func writeFortunePath(w schemaYAMLWriter) {
+	w.line("  /fortune:")
+	w.line("    get:")
+	w.line("      operationId: getFortune")
+	w.line("      summary: Get a fortune quote")
+	w.line("      parameters:")
+	writeStringEnumQueryParam(w, "length", false, []string{"short", "long"})
+	w.line("      responses:")
+	w.line("        '200':")
+	w.line("          description: Fortune quote response")
+}
+
+func writeFortuneConfigPath(w schemaYAMLWriter) {
+	w.line("  /fortune/config:")
+	w.line("    get:")
+	w.line("      operationId: getFortuneConfig")
+	w.line("      summary: Get fortune provider configuration")
+	w.line("      responses:")
+	w.line("        '200':")
+	w.line("          description: Current fortune provider configuration")
+	w.line("    post:")
+	w.line("      operationId: setFortuneConfig")
+	w.line("      summary: Set fortune provider configuration")
+	w.line("      requestBody:")
+	w.line("        required: true")
+	w.line("        content:")
+	w.line("          application/json:")
+	w.line("            schema:")
+	w.line("              type: object")
+	w.line("              properties:")
+	w.line("                default_length:")
+	w.line("                  type: string")
+	w.line("                  enum:")
+	w.line("                    - short")
+	w.line("                    - long")
+	w.line("              required:")
+	w.line("                - default_length")
+	w.line("      responses:")
+	w.line("        '200':")
+	w.line("          description: Updated fortune provider configuration")
+}
+
+func writeShellPaths(w schemaYAMLWriter, shellCfg shellSchemaConfig) {
 	for _, name := range sortedShellEndpointNames(shellCfg) {
 		endpoint := shellCfg.Endpoints[name]
 		pathName := strings.Trim(name, "/")
@@ -486,28 +494,40 @@ func writeShellPaths(out io.Writer, shellCfg shellSchemaConfig) {
 			continue
 		}
 
-		fmt.Fprintf(out, "  /shell/%s:\n", yamlPathSegment(pathName))
-		fmt.Fprintln(out, "    get:")
-		fmt.Fprintf(out, "      operationId: %s\n", yamlString("runShell"+operationName(pathName)))
+		w.line("  /shell/%s:", yamlPathSegment(pathName))
+		w.line("    get:")
+		w.line("      operationId: %s", yamlString("runShell"+operationName(pathName)))
 		if endpoint.Description != "" {
-			fmt.Fprintf(out, "      summary: %s\n", yamlString(endpoint.Description))
+			w.line("      summary: %s", yamlString(endpoint.Description))
 		} else {
-			fmt.Fprintf(out, "      summary: Run configured shell endpoint %s\n", yamlString(pathName))
+			w.line("      summary: %s", yamlString("Run configured shell endpoint "+pathName))
 		}
 		params := shellQueryParams(endpoint.Args)
 		if len(params) > 0 {
-			fmt.Fprintln(out, "      parameters:")
+			w.line("      parameters:")
 			for _, param := range params {
-				fmt.Fprintf(out, "        - name: %s\n", yamlString(param))
-				fmt.Fprintln(out, "          in: query")
-				fmt.Fprintln(out, "          required: true")
-				fmt.Fprintln(out, "          schema:")
-				fmt.Fprintln(out, "            type: string")
+				writeStringQueryParam(w, param, true)
 			}
 		}
-		fmt.Fprintln(out, "      responses:")
-		fmt.Fprintln(out, "        '200':")
-		fmt.Fprintln(out, "          description: Shell command output")
+		w.line("      responses:")
+		w.line("        '200':")
+		w.line("          description: Shell command output")
+	}
+}
+
+func writeStringQueryParam(w schemaYAMLWriter, name string, required bool) {
+	w.line("        - name: %s", yamlString(name))
+	w.line("          in: query")
+	w.line("          required: %t", required)
+	w.line("          schema:")
+	w.line("            type: string")
+}
+
+func writeStringEnumQueryParam(w schemaYAMLWriter, name string, required bool, values []string) {
+	writeStringQueryParam(w, name, required)
+	w.line("            enum:")
+	for _, value := range values {
+		w.line("              - %s", yamlString(value))
 	}
 }
 
