@@ -44,9 +44,9 @@ Do not expose broad command runners, scripting interpreters with user-controlled
       "command": "/absolute/path/to/program",
       "args": ["fixed", "$query_parameter"],
       "description": "Short summary used in the generated Action schema.",
-      "instruction": "Endpoint-specific instruction added to GoAgent setup output.",
+      "instruction": "Endpoint-specific instruction added to GoAgent gpt create output.",
       "conversation_starters": [
-        "Example starter added to GoAgent setup output."
+        "Example starter added to GoAgent gpt create output."
       ]
     }
   }
@@ -61,19 +61,19 @@ Required fields:
 Optional top-level fields:
 
 - `prefix`: returned as `prefix` in shell endpoint JSON responses; omit it or set it to an empty string to disable this field
-- `instructions`: global shell-provider instructions added to `GoAgent setup` when the shell provider config is present
+- `instructions`: global shell-provider instructions added to `GoAgent gpt create` when the shell provider config is present
 
 Optional endpoint fields:
 
 - `chroot`: working root used by the command, if supported by the current platform/runtime
 - `description`: used as the generated OpenAPI summary
-- `instruction`: endpoint-specific instruction added to GoAgent setup output
-- `conversation_starters`: added to the conversation starters printed by `GoAgent setup`
+- `instruction`: endpoint-specific instruction added to GoAgent gpt create output
+- `conversation_starters`: added to the conversation starters printed by `GoAgent gpt create`
 
 After editing the config, rerun:
 
 ```bash
-GoAgent setup https://your-goagent-url.example
+GoAgent gpt create https://your-goagent-url.example
 ```
 
 Then update the GPT instructions, starters, and Action schema from the generated output.
@@ -90,7 +90,7 @@ If `prefix` is configured, every shell endpoint JSON response includes it:
 }
 ```
 
-`GoAgent setup` also emits a global shell-provider instruction telling the GPT to start final answers with that exact prefix when a shell response includes it.
+`GoAgent gpt create` also emits a global shell-provider instruction telling the GPT to start final answers with that exact prefix when a shell response includes it.
 
 To disable prefix behaviour, remove `prefix` from the config or set it to an empty string:
 
@@ -314,12 +314,12 @@ Avoid endpoints that:
 
 2. Restart GoAgent if it is already running.
 
-3. Regenerate setup output:
+3. Regenerate gpt create output:
 
 ```bash
-GoAgent setup https://your-goagent-url.example
+GoAgent gpt create https://your-goagent-url.example
 ```
 
 4. Update the GPT Configure fields and Action schema from the generated output.
 
-The goal is: add endpoint metadata once, then let `GoAgent setup` do the dull copying work. Dull copying work is what computers are for, despite their ongoing attempts to become poets.
+The goal is: add endpoint metadata once, then let `GoAgent gpt create` do the dull copying work. Dull copying work is what computers are for, despite their ongoing attempts to become poets.
