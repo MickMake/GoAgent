@@ -67,11 +67,6 @@ func main() {
 			log.Fatal(err)
 		}
 		return
-	case "connector":
-		if err := runConnectorCommand(cfg, os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
 	case "skill":
 		if err := runSkillCommand(cfg, os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -117,12 +112,6 @@ Usage:
   GoAgent mcp config set <key> <value>
   GoAgent mcp config reset <key>
 
-  GoAgent connector create
-  GoAgent connector verify
-  GoAgent connector config
-  GoAgent connector config set <key> <value>
-  GoAgent connector config reset <key>
-
   GoAgent skill create
   GoAgent skill verify
   GoAgent skill config
@@ -143,7 +132,6 @@ Examples:
   GoAgent gpt key create
   GoAgent gpt cloudflared update
   GoAgent mcp create
-  GoAgent connector create
   GoAgent skill create
   GoAgent config set global.artifact_dir ~/.GoAgent/artifacts
   GoAgent config set serve.mcp_enabled true
