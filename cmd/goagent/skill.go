@@ -307,6 +307,14 @@ func validateSkillZip(filename string) []verifyCheck {
 
 	info, err := os.Stat(filename)
 	if err != nil {
+		detail := err.Error()
+		if os.IsNotExist(err) {
+			detail = fmt.Sprintf("%s not found in current directory; run GoAgent skill create first", filename)
+		}
+		return []verifyCheck{{Status: verifyFail, Name: "skill zip exists", Detail: detail}}
+	}
+
+	if err != nil {
 		return []verifyCheck{{Status: verifyFail, Name: "skill zip exists", Detail: err.Error()}}
 	}
 	if info.Size() == 0 {
