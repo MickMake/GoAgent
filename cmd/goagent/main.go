@@ -156,16 +156,22 @@ func runServeCommand(cfg AppConfig, args []string) error {
 		return fmt.Errorf("nothing to serve; enable serve.gpt_enabled or serve.mcp_enabled in config")
 	}
 	if cfg.Serve.GPTEnabled && cfg.Serve.MCPEnabled {
-		errCh := make(chan error, 1)
+		errCh := make(chan error, 2)
 		go func() {
-			errCh <- runGPTServeCommand(cfg)
+			if err := runGPTServeCommand(cfg); err != nil {
+				errCh <- fmt.Errorf("gpt serve failed: %w", err)
+				return
+			}
+			errCh <- nil
 		}()
-		select {
-		case err := <-errCh:
-			return err
-		case <-time.After(100 * time.Millisecond):
-		}
-		return runMCPServeCommand(cfg)
+		go func() {
+			if err := runMCPServeCommand(cfg); err != nil {
+				errCh <- fmt.Errorf("mcp serve failed: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+		return <-errCh
 	}
 	if cfg.Serve.MCPEnabled {
 		return runMCPServeCommand(cfg)
