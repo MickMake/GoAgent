@@ -19,7 +19,7 @@ GoAgent runs a small HTTP service on your machine, protects provider endpoints w
 - Optional shell response prefix field for clearer ChatGPT replies
 - GPT setup output for ChatGPT configuration: `GoAgent setup`
 - GPT configuration verification: `GoAgent gpt verify`
-- Skill package generation for reusable GoAgent workflows: `GoAgent skill create`
+- Skill package generation and verification for reusable GoAgent workflows: `GoAgent skill create` and `GoAgent skill verify`
 - Public OpenAPI schema endpoint for ChatGPT Actions: `/config/schema`
 - Optional protected knowledge files under `~/.GoAgent/knowledge/`
 - Designed for ChatGPT Actions and Skill-guided workflows
@@ -137,7 +137,8 @@ GoAgent help
 GoAgent serve
 GoAgent setup [server-url] [privacy-url]
 GoAgent gpt verify
-GoAgent skill create [name] [output]
+GoAgent skill create
+GoAgent skill verify
 GoAgent key create [name]
 GoAgent key ls
 GoAgent key rm <name>
@@ -220,25 +221,23 @@ Generate a reusable ChatGPT Skill package from the current GoAgent setup:
 GoAgent skill create
 ```
 
-This writes:
+This writes and verifies:
 
 ```text
-skill.zip
+skill-GoAgent.zip
 ```
 
-The default skill name is:
+The generated zip contains one top-level directory:
 
 ```text
-local-goagent
+skill-GoAgent/
 ```
 
-You can provide a custom skill name and output path:
+The internal Skill frontmatter name is lowercase:
 
-```bash
-GoAgent skill create workshop-goagent ./dist
+```yaml
+name: skill-goagent
 ```
-
-If the output path is a directory or does not end with `skill.zip`, GoAgent writes `skill.zip` inside it.
 
 The generated Skill includes:
 
@@ -249,6 +248,22 @@ The generated Skill includes:
 - `references/action-schema-url.md` with schema, privacy, and authentication notes
 - `references/shell-endpoints.md` generated from the current shell provider config
 - `references/knowledge-files.md` if knowledge files exist
+
+Verify the existing package:
+
+```bash
+GoAgent skill verify
+```
+
+The verifier checks `skill-GoAgent.zip` for:
+
+- zip readability and size below the 25 MB target
+- one top-level `skill-GoAgent/` directory
+- required files such as `SKILL.md` and `agents/openai.yaml`
+- expected lowercase frontmatter name
+- linked reference files
+- core Action schema operations and API key auth
+- unsafe zip paths such as absolute paths or `..` traversal
 
 The Skill helps ChatGPT follow GoAgent conventions, but it does not install the Custom GPT Action or API key by itself. It is a very useful clipboard, not a licensed electrician.
 
