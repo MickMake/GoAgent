@@ -199,53 +199,6 @@ Verify generated MCP artifacts:
 GoAgent mcp verify
 ```
 
-## Hosted HTTP connector bridge artifacts
-
-Generate connector/tool bridge artifacts for a hosted HTTPS OpenAPI runtime:
-
-```bash
-GoAgent connector create
-```
-
-Generated files:
-
-```text
-~/.GoAgent/artifacts/connector/connector.json
-~/.GoAgent/artifacts/connector/connector.md
-~/.GoAgent/artifacts/connector/openapi.yaml
-```
-
-The connector bridge uses the existing GPT HTTP server, not MCP stdio. Start the HTTP server with:
-
-```bash
-GoAgent serve gpt
-```
-
-For remote runtimes, set the hosted HTTPS server URL first. Cloudflare Tunnel is the usual tiny door in the wall:
-
-```bash
-GoAgent config set gpt.server_url https://example.trycloudflare.com
-GoAgent connector create
-```
-
-Create an API key for the connector/tool runtime:
-
-```bash
-GoAgent gpt key create
-```
-
-Show the effective connector view:
-
-```bash
-GoAgent connector config
-```
-
-Verify generated connector artifacts:
-
-```bash
-GoAgent connector verify
-```
-
 ## Skill artifacts
 
 Generate a reusable ChatGPT Skill package from the current GoAgent setup:
@@ -300,7 +253,6 @@ Show scoped effective config:
 ```bash
 GoAgent gpt config
 GoAgent mcp config
-GoAgent connector config
 GoAgent skill config
 ```
 
@@ -351,7 +303,7 @@ GoAgent config set cloudflare.log_level info
 GoAgent config set cloudflare.version latest
 ```
 
-Set GPT setup and connector URLs:
+Set GPT setup URLs:
 
 ```bash
 GoAgent config set gpt.server_url https://example.trycloudflare.com
@@ -399,10 +351,6 @@ Knowledge file URLs require the configured `X-API-Key` header.
 ├── mcp/
 │   ├── client-config.json
 │   └── client-config.md
-├── connector/
-│   ├── connector.json
-│   ├── connector.md
-│   └── openapi.yaml
 └── skill/
     ├── skill-GoAgent.zip
     └── skill-GoAgent/
