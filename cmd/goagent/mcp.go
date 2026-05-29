@@ -66,10 +66,12 @@ func runMCPServeCommand(cfg AppConfig) error {
 
 func newMCPServer(cfg AppConfig) *mcpServer {
 	return &mcpServer{
-		cfg:   cfg,
-		quote: fortune.Quote,
+		cfg: cfg,
+		quote: func(length string) (fortune.Response, error) {
+			return fortune.QuoteWithRuntime(length, fortuneRuntime(cfg))
+		},
 		shellProvider: func() (*shell.Provider, error) {
-			return shell.New(cfg.Global.ProviderBaseDir)
+			return shell.NewWithRuntime(cfg.Global.ProviderBaseDir, shellRuntime(cfg))
 		},
 	}
 }

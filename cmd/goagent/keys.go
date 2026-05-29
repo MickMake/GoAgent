@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,8 @@ import (
 
 func requireAPIKey(expected string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-API-Key") != expected {
+		provided := r.Header.Get("X-API-Key")
+		if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

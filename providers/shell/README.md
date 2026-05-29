@@ -28,8 +28,20 @@ The provider:
 - treats `$name` arguments as query parameter placeholders
 - passes query parameter values as command arguments, not as executable code
 - protects shell endpoints with the configured `X-API-Key` header
+- enforces the configured command timeout and output limit
+- runs child processes with GoAgent's explicit configured child environment instead of blindly inheriting the parent process environment
 
 Do not expose broad command runners, scripting interpreters with user-controlled programs, package managers, destructive commands, or commands that write arbitrary files.
+
+Runtime limits are controlled in the main GoAgent config:
+
+```bash
+GoAgent config set runtime.command_timeout_seconds 30
+GoAgent config set runtime.output_limit_bytes 1048576
+GoAgent config set runtime.child_env PATH=/usr/bin:/bin,LANG=C,LC_ALL=C
+```
+
+Only add environment variables that a specific endpoint needs. Avoid passing secrets, tokens, SSH agent values, or broad inherited environments through to child commands.
 
 ## Config shape
 

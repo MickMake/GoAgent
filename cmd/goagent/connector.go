@@ -184,7 +184,7 @@ func effectiveConnectorConfig(cfg AppConfig) map[string]any {
 		"transport":    "https",
 		"server_url":   serverURL,
 		"schema_url":   connectorSchemaURL(serverURL),
-		"auth": map[string]any{"type": "api_key", "in": "header", "name": connectorAuthHeader},
+		"auth":         map[string]any{"type": "api_key", "in": "header", "name": connectorAuthHeader},
 		"artifacts": map[string]any{
 			"manifest": artifactPath(cfg, "connector", "connector.json"),
 			"guide":    artifactPath(cfg, "connector", "connector.md"),
@@ -202,7 +202,7 @@ func newConnectorManifest(cfg AppConfig, serverURL string) connectorManifest {
 		Transport:   "https",
 		ServerURL:   serverURL,
 		SchemaURL:   connectorSchemaURL(serverURL),
-		Auth: connectorAuth{Type: "api_key", In: "header", Name: connectorAuthHeader},
+		Auth:        connectorAuth{Type: "api_key", In: "header", Name: connectorAuthHeader},
 		Artifacts: map[string]string{
 			"openapi": artifactPath(cfg, "connector", "openapi.yaml"),
 			"guide":   artifactPath(cfg, "connector", "connector.md"),

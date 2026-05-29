@@ -1,14 +1,18 @@
 package shell
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type Middleware func(http.HandlerFunc) http.HandlerFunc
@@ -29,8 +33,15 @@ type Config struct {
 }
 
 type Provider struct {
-	Config Config
-	prefix string
+	Config  Config
+	prefix  string
+	runtime Runtime
+}
+
+type Runtime struct {
+	CommandTimeoutSeconds int
+	OutputLimitBytes      int
+	ChildEnv              []string
 }
 
 type Response struct {
@@ -44,18 +55,27 @@ type Response struct {
 }
 
 func New(providerBaseDir string) (*Provider, error) {
+	return NewWithRuntime(providerBaseDir, Runtime{})
+}
+
+func NewWithRuntime(providerBaseDir string, runtime Runtime) (*Provider, error) {
 	cfg, err := loadConfig(providerBaseDir)
 	if err != nil {
 		return nil, err
 	}
 	return &Provider{
-		Config: cfg,
-		prefix: normalizePrefix(cfg.Prefix),
+		Config:  cfg,
+		prefix:  normalizePrefix(cfg.Prefix),
+		runtime: normalizeRuntime(runtime),
 	}, nil
 }
 
 func Register(mux *http.ServeMux, protect Middleware, providerBaseDir string) error {
-	provider, err := New(providerBaseDir)
+	return RegisterWithRuntime(mux, protect, providerBaseDir, Runtime{})
+}
+
+func RegisterWithRuntime(mux *http.ServeMux, protect Middleware, providerBaseDir string, runtime Runtime) error {
+	provider, err := NewWithRuntime(providerBaseDir, runtime)
 	if err != nil {
 		return err
 	}
@@ -148,7 +168,12 @@ func (p *Provider) Run(name string, input map[string]string) (Response, error) {
 		return p.withPrefix(Response{Endpoint: path}), err
 	}
 
-	cmd := exec.Command(command, resolvedArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.runtime.CommandTimeoutSeconds)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, command, resolvedArgs...)
+	if len(p.runtime.ChildEnv) > 0 {
+		cmd.Env = p.runtime.ChildEnv
+	}
 	if err := applyChroot(cmd, chroot); err != nil {
 		return p.withPrefix(Response{
 			Endpoint: path,
@@ -158,18 +183,72 @@ func (p *Provider) Run(name string, input map[string]string) (Response, error) {
 		}), err
 	}
 
-	out, err := cmd.CombinedOutput()
+	output := &limitedBuffer{limit: int64(p.runtime.OutputLimitBytes)}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err = cmd.Run()
 	response := p.withPrefix(Response{
 		Endpoint: path,
 		Command:  command,
 		Args:     resolvedArgs,
 		Chroot:   chroot,
-		Output:   strings.TrimSpace(string(out)),
+		Output:   strings.TrimSpace(output.String()),
 	})
+	if ctx.Err() == context.DeadlineExceeded {
+		return response, fmt.Errorf("command timed out after %d second(s)", p.runtime.CommandTimeoutSeconds)
+	}
+	if output.Err() != nil {
+		return response, output.Err()
+	}
 	if err != nil {
 		return response, err
 	}
 	return response, nil
+}
+
+func normalizeRuntime(runtime Runtime) Runtime {
+	if runtime.CommandTimeoutSeconds <= 0 {
+		runtime.CommandTimeoutSeconds = 30
+	}
+	if runtime.OutputLimitBytes <= 0 {
+		runtime.OutputLimitBytes = 1024 * 1024
+	}
+	if len(runtime.ChildEnv) == 0 {
+		runtime.ChildEnv = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
+	}
+	return runtime
+}
+
+type limitedBuffer struct {
+	buf   bytes.Buffer
+	limit int64
+	err   error
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
+	remaining := b.limit - int64(b.buf.Len())
+	if remaining <= 0 {
+		b.err = fmt.Errorf("command output exceeded limit of %d bytes", b.limit)
+		return 0, b.err
+	}
+	if int64(len(p)) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.err = fmt.Errorf("command output exceeded limit of %d bytes", b.limit)
+		return int(remaining), b.err
+	}
+	return b.buf.Write(p)
+}
+
+func (b *limitedBuffer) String() string { return b.buf.String() }
+
+func (b *limitedBuffer) Err() error {
+	if b.err == io.ErrShortWrite {
+		return fmt.Errorf("command output exceeded limit of %d bytes", b.limit)
+	}
+	return b.err
 }
 
 func Params(configuredArgs []string) []string {
